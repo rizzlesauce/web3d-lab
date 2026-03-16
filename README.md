@@ -2,7 +2,7 @@
 
 Interactive real-time 3D scene built with React Three Fiber and Three.js, demonstrating a modern PBR rendering pipeline with HDR lighting, environment reflections, and mobile-optimized performance.
 
-Live Demo:  
+Live Demo:
 https://ross-web3d-lab.onrender.com
 
 Tip: rotate the scene to see HDR reflections and lighting changes across materials.
@@ -32,7 +32,6 @@ https://github.com/user-attachments/assets/ff47deca-a10a-4643-a4d7-ca236c618907
 ### Visual Quality
 * Soft shadows
 * Screen-space ambient occlusion (N8AO)
-* Contact shadows
 * Depth of field
 * Bloom
 

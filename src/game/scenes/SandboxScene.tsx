@@ -563,7 +563,8 @@ export function SandboxScene() {
         />
       )}
 
-      {true && gpuTier.tier >= 1 && (
+      {/* doesn't work well with uneven ground */}
+      {false && gpuTier.tier >= 1 && (
         <ContactShadows
           position={[0, 0.001, 0]}
           opacity={0.4}
