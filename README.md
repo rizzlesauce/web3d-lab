@@ -1,96 +1,56 @@
 # React Three Fiber Demo
 
-Live [Demo](https://ross-web3d-lab.onrender.com)
+Interactive real-time 3D scene built with React Three Fiber and Three.js, demonstrating a modern PBR rendering pipeline with HDR lighting, environment reflections, and mobile-optimized performance.
 
-Featuring:
-* HDR environment map with custom ground projection
-* Cube camera reflections
-* Animated GLB
-* Custom ground displacement map
+Live Demo:  
+https://ross-web3d-lab.onrender.com
+
+Tip: rotate the scene to see HDR reflections and lighting changes across materials.
+
+## Demo Videos
+Desktop (ROG Strix G18 laptop)
+
+https://github.com/user-attachments/assets/e578c89f-118c-4a47-bc4c-0f013443a8ed
+
+Mobile (Google Pixel 7)
+
+https://github.com/user-attachments/assets/ff47deca-a10a-4643-a4d7-ca236c618907
+
+## Features
+
+### Rendering Pipeline
+* HDR environment lighting with background and ground projection
+* Physically-based rendering (PBR materials)
+* Cube camera reflections with PMREM processing
 * Custom shaders
-* Floating particles (dynamically regenerating)
-* Soft shadows
+
+### Scene & Interaction
+* Animated GLB model
+* Floating particle system (dynamically regenerating)
 * Orbit controls
-* Desktop / Mobile / GPU tier detection / performance optimization
-* Postprocessing effects
-  * Academy Color Encoding System filmic tone mapping
-  * Brightness / contrast enhancement
-  * Bloom
-  * Screen space ambient occlusion (N8AO)
-  * Depth of field
-  * Contact shadows
-  * Subpixel morphological anti-aliasing
 
-# React + TypeScript + Vit
+### Visual Quality
+* Soft shadows
+* Screen-space ambient occlusion (N8AO)
+* Contact shadows
+* Depth of field
+* Bloom
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+### Post-Processing
+* ACES filmic tone mapping
+* Brightness / contrast adjustments
+* Subpixel morphological anti-aliasing (SMAA)
 
-Currently, two official plugins are available:
+### Performance
+* Desktop / mobile support
+* GPU tier detection and dynamic performance optimization
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Tech Stack
 
-## React Compiler
+* React
+* Vite
+* React Three Fiber
+* Three.js
+* TypeScript
+* WebGL
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
