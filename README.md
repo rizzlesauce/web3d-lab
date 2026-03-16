@@ -54,3 +54,8 @@ https://github.com/user-attachments/assets/ff47deca-a10a-4643-a4d7-ca236c618907
 * TypeScript
 * WebGL
 
+## Notes
+
+* Tested on desktop Chrome and Google Pixel 7
+* Includes device-aware quality/performance adjustments
+* Mobile rendering quality is tuned based on device capability
