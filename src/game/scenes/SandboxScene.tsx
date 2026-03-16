@@ -3,9 +3,6 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { Bloom, BrightnessContrast, DepthOfField, EffectComposer, HueSaturation, N8AO, SMAA, ToneMapping, Vignette } from "@react-three/postprocessing";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { AtmosphereParticles } from "../entities/AtmosphereParticles";
-import { AtmosphereParticlesFrustum } from "../entities/AtmosphereParticlesFrustum";
-import { AtmospherePollen } from "../entities/AtmospherePollen";
 import { AtmospherePollenCylinder } from "../entities/AtmospherePollenCylinder";
 import { Gloria } from "../entities/Gloria";
 import { Ground } from "../entities/Ground";
@@ -529,52 +526,6 @@ export function SandboxScene() {
           </StablePmremCubeCamera>
         )}
       </group>
-
-      {false && (
-        <AtmosphereParticles
-          count={gpuTier.tier >= 3 ? 220 : 100}
-          area={gpuTier.tier >= 3 ? [18, 8, 18] : [14, 7, 14]}
-          baseY={0.5}
-          texturePath="/textures/particle_sprite_soft_warm.png"
-          color="#fff8e8"
-          size={gpuTier.tier >= 3 ? 1.4 : 1.2}
-          opacity={gpuTier.tier >= 3 ? 0.38 : 0.32}
-          wind={gpuTier.tier >= 3 ? [0.06, -0.38, 0.01] : [0.05, -0.34, 0.01]}
-        />
-      )}
-
-      {false && (
-        <AtmosphereParticlesFrustum
-          count={gpuTier.tier >= 3 ? 220 : 100}
-          texturePath="/textures/particle_sprite_soft_warm.png"
-          color="#fff8e8"
-          size={gpuTier.tier >= 3 ? 1.4 : 1.2}
-          opacity={gpuTier.tier >= 3 ? 0.38 : 0.32}
-          nearDist={1.5}
-          farDist={18}
-          widthFactor={1.35}
-          heightFactor={1.35}
-          wind={gpuTier.tier >= 3 ? [0.06, -0.38, 0.01] : [0.05, -0.34, 0.01]}
-        />
-      )}
-
-      {false && (
-        <AtmospherePollen
-          count={gpuTier.tier >= 3 ? 110 : 100}
-          texturePath="/textures/particle_sprite_soft_warm.png"
-          color="#fff4c8"
-          size={gpuTier.tier >= 3 ? 0.8 : 0.8}
-          opacity={gpuTier.tier >= 3 ? 0.38 : 0.38}
-          nearDist={1.5}
-          farDist={20}
-          widthFactor={1.45}
-          heightFactor={1.35}
-          baseWind={gpuTier.tier >= 3 ? [0.035, -0.06, 0.01] : [0.035, -0.06, 0.01]}
-          sunlightDirection={sceneRotatedSunlightDirection}
-          sunGlowStrength={1.4}
-          spawnFadeInTime={0.7}
-        />
-      )}
 
       {true && (
         <AtmospherePollenCylinder
