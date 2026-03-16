@@ -60,7 +60,7 @@ export function Model({
                     console.log("Making transparent material CLIPPED:", mat.map.name);
                   }
                   mat.transparent = false;
-                  mat.alphaTest = 0.4;
+                  mat.alphaTest = 0.5;
                   mat.depthWrite = true;
                   mat.alphaToCoverage = true;
                   mat.needsUpdate = true;

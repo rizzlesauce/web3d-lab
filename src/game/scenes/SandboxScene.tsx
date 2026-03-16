@@ -1,4 +1,4 @@
-import { ContactShadows, Environment, GizmoHelper, GizmoViewport, Grid, useDetectGPU, useProgress } from "@react-three/drei";
+import { ContactShadows, Environment, GizmoHelper, GizmoViewport, Grid, useProgress } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Bloom, BrightnessContrast, DepthOfField, EffectComposer, HueSaturation, N8AO, SMAA, ToneMapping, Vignette } from "@react-three/postprocessing";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -17,6 +17,7 @@ import { WarriorGirl } from "../entities/WarriorGirl";
 import { Woman } from "../entities/Woman";
 import { useGameStore } from "../state/useGameStore";
 import { rotateY } from "../utility/transforms";
+import { useGpuTier } from "../utility/useGpuTier";
 
 const hdrs = [
   {
@@ -56,12 +57,14 @@ export function SandboxScene() {
   const [cubeCameraResolution, setCubeCameraResolution] = useState(64);
 
   const { progress: loadingProgress } = useProgress();
-  const gpuTier = useDetectGPU();
+  const gpuTier = useGpuTier();
   const hdrPath = useGameStore(state => state.hdrPath);
   const setHdrPath = useGameStore(state => state.setHdrPath);
   const setInitialFramesRendered = useGameStore(state => state.setInitialFramesRendered);
   const frameRef = useRef(0);
   const gpuTierRef = useRef(gpuTier);
+
+  const usingSimplerTree = gpuTier.tier < 1;
 
   const sunPosition = useMemo(() => {
     return new THREE.Vector3(8, 12, 6);
@@ -119,6 +122,10 @@ export function SandboxScene() {
   }, [camera])
 
   useEffect(() => {
+    if (gpuTier.tier < 0) {
+      return;
+    }
+
     const hdr = hdrs[0];
     const { resolutions } = hdr;
     let resolution = resolutions[0];
@@ -145,6 +152,8 @@ export function SandboxScene() {
         resolution = 256;
       } else if (gpuTier.tier >= 1) {
         resolution = 128;
+      } else if (true) {
+        resolution = 128;
       } else {
         resolution = 64;
       }
@@ -165,9 +174,11 @@ export function SandboxScene() {
 
   useFrame((state, _delta) => {
     if (frameRef.current === 0) {
-      if (gpuTierRef.current.tier >= 2 || (true && allowingHigherTier1Quality && gpuTierRef.current.tier >= 1)) {
+      const gpuTier = gpuTierRef.current;
+
+      if (gpuTier.tier >= 2 || (true && allowingHigherTier1Quality && gpuTier.tier >= 0)) {
         state.gl.shadowMap.type = THREE.PCFSoftShadowMap;
-      } else if (true && gpuTierRef.current.tier >= 1) {
+      } else if (true && gpuTier.tier >= 1) {
         state.gl.shadowMap.type = THREE.PCFShadowMap;
       } else if (true) {
         state.gl.shadowMap.type = THREE.BasicShadowMap;
@@ -239,14 +250,14 @@ export function SandboxScene() {
           />
         )}
 
-        {true && (
+        {true && gpuTier.tier >= 0 && (
           <directionalLight
             position={[-8, 5, -5]}
             intensity={0.15}
           />
         )}
 
-        {true && (
+        {true && gpuTier.tier >= 0 && (
           <directionalLight
             position={[-6, 6, 8]}
             intensity={0.1}
@@ -279,7 +290,7 @@ export function SandboxScene() {
             planeSegments={256}
             size={200}
             radius={usingEnvironmentGroundProjection ? 48 : 85}
-            fadeWidth={(true || (false && gpuTier.tier >= 2) || (true && allowingHigherTier1Quality && gpuTier.tier >= 1)) ? (usingEnvironmentGroundProjection ? 10 : 20) : 0}
+            fadeWidth={(true || (false && gpuTier.tier >= 2) || (true && allowingHigherTier1Quality && gpuTier.tier >= 0)) ? (usingEnvironmentGroundProjection ? 10 : 20) : 0}
             projectionHeight={32}
             projectionScale={2}
             projectionCurve={1.8}
@@ -377,7 +388,7 @@ export function SandboxScene() {
               rotation={[0, Math.PI / 4, 0]}
             />
 
-            {true && (
+            {true && gpuTier.tier >= 0 && (
               <Gloria
                 position={[-1.4, 0.814, -1.2]}
                 rotation={[0, -Math.PI / 2, 0]}
@@ -403,15 +414,15 @@ export function SandboxScene() {
           </SpinningObject>
         )}
 
-        {false && (
+        {true && usingSimplerTree && (
           <OldTree
-            position={[-7, 0, -3]}
-            rotation={[0, Math.PI / 4, 0]}
-            //scale={[0.8, 0.8, 0.8]}
+            position={[7, 0.99, 5]}
+            rotation={[0, 2 * Math.PI * 0.17, 0]}
+            scale={[1.2, 1.2, 1.2]}
           />
         )}
 
-        {true && (
+        {true && !usingSimplerTree && (
           <Model
             modelPath="/models/tree_gn_export.glb"
             alphaBlendMaps={new Set(['BarkB_Col-BarkB_Alpha'])}
@@ -450,7 +461,7 @@ export function SandboxScene() {
                   ? 1
                   : false && (false || gpuTier.tier >= 2)
                     ? 4
-                    : true && gpuTier.tier >= 1
+                    : true && gpuTier.tier >= 0
                       ? true && allowingHigherTier1Quality
                         ? 10
                         : 20
@@ -463,6 +474,7 @@ export function SandboxScene() {
               excludeLayer={cubeCameraLayer}
               //renderPriority={2}
               materialRefs={[cubeCameraMaterialRef]}
+              disabled={gpuTier.tier < 0}
             >
               <mesh
                 castShadow
@@ -496,7 +508,7 @@ export function SandboxScene() {
                 ? 10
                 : false && (false || gpuTier.tier >= 2)
                   ? 4
-                  : true && gpuTier.tier >= 1
+                  : true && gpuTier.tier >= 0
                     ? true && allowingHigherTier1Quality
                       ? 10
                       : 20
@@ -532,7 +544,7 @@ export function SandboxScene() {
         )}
       </group>
 
-      {true && (
+      {true && gpuTier.tier >= 0 && (
         <AtmospherePollenCylinder
           count={gpuTier.tier >= 3 ? 30 : 30}
           texturePath="/textures/particle_sprite_soft_warm.png"
@@ -551,7 +563,7 @@ export function SandboxScene() {
         />
       )}
 
-      {true && (
+      {true && gpuTier.tier >= 1 && (
         <ContactShadows
           position={[0, 0.001, 0]}
           opacity={0.4}
@@ -570,7 +582,7 @@ export function SandboxScene() {
         </GizmoHelper>
       )}
 
-      {true && (
+      {true && gpuTier.tier >= 1 && (
         <EffectComposer
           multisampling={0}
         >
@@ -578,7 +590,7 @@ export function SandboxScene() {
             {true && (gpuTier.tier >= 3 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
               <N8AO
                 intensity={4}
-                halfRes={gpuTier.tier < 3}
+                halfRes={true || gpuTier.tier < 3}
                 //color="black"
                 aoRadius={1.0}
                 distanceFalloff={1.0}
@@ -595,10 +607,12 @@ export function SandboxScene() {
               />
             )}
 
-            <BrightnessContrast
-              brightness={0}
-              contrast={0.09}
-            />
+            {true && gpuTier.tier >= 1 && (
+              <BrightnessContrast
+                brightness={0}
+                contrast={0.09}
+              />
+            )}
 
             {false && (
               <HueSaturation
@@ -607,10 +621,12 @@ export function SandboxScene() {
               />
             )}
 
-            <Vignette
-              offset={0.18}
-              darkness={0.28}
-            />
+            {true && gpuTier.tier >= 1 && (
+              <Vignette
+                offset={0.18}
+                darkness={0.28}
+              />
+            )}
 
             {true && (gpuTier.tier >= 3 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
               <DepthOfField
@@ -624,7 +640,9 @@ export function SandboxScene() {
               <SMAA />
             )}
 
-            <ToneMapping />
+            {true && gpuTier.tier >= 1 && (
+              <ToneMapping />
+            )}
           </>
         </EffectComposer>
       )}

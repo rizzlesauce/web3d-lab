@@ -1,15 +1,16 @@
-import { FlyControls, OrbitControls, Stats, useDetectGPU, useProgress } from "@react-three/drei";
-import { Canvas, useFrame, type Dpr } from "@react-three/fiber";
+import { FlyControls, OrbitControls, Stats, useProgress } from "@react-three/drei";
+import { Canvas, type Dpr } from "@react-three/fiber";
 import { useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { backgroundRotation, rotatingSceneForBackgroundRotation } from "../game/scenes/SandboxScene";
 import { useGameStore } from "../game/state/useGameStore";
 import { rotateY } from "../game/utility/transforms";
+import { useGpuTier } from "../game/utility/useGpuTier";
 
 export function GameCanvas({ children }: { children: React.ReactNode }) {
   const hdrPath = useGameStore(state => state.hdrPath);
   const initialFramesRendered = useGameStore(state => state.initialFramesRendered);
-  const gpuTier = useDetectGPU();
+  const gpuTier = useGpuTier();
   const { progress: loadingProgress } = useProgress();
 
   const [dragControlsEnabled, setDragControlsEnabled] = useState(true);
@@ -18,15 +19,15 @@ export function GameCanvas({ children }: { children: React.ReactNode }) {
   const elementRef = useRef<HTMLDivElement>(null!);
 
   const dpr: Dpr = useMemo(() => {
-    if (gpuTier.tier >= 3) {
+    if (false && gpuTier.tier >= 3) {
       return window.devicePixelRatio;
     }
 
-    if (false && gpuTier.tier >= 2) {
+    if (true && gpuTier.tier >= 2) {
       return [1, 2];
     }
 
-    return Math.min(window.devicePixelRatio, 1.5);
+    return Math.min(window.devicePixelRatio, gpuTier.tier >= 1 ? 1.5 : 1.25);
   }, [gpuTier]);
 
   const cameraPos = useMemo(() => {
@@ -90,7 +91,7 @@ export function GameCanvas({ children }: { children: React.ReactNode }) {
                 height: "100%",
               }}
             >
-              Loading... {Math.min(loadingProgress, 99).toFixed(0)}%
+              Loading... {Math.min(loadingProgress, 99).toFixed(0)}% [Tier {gpuTier.tier}]
             </div>
           )}
         </div>
