@@ -1,4 +1,27 @@
-# React + TypeScript + Vite
+# React Three Fiber Demo
+
+Live [Demo](https://web3d-lab.onrender.com)
+
+Featuring:
+* HDR environment map with custom ground projection
+* Cube camera reflections
+* Animated GLB
+* Custom ground displacement map
+* Custom shaders
+* Floating particles (dynamically regenerating)
+* Soft shadows
+* Orbit controls
+* Desktop / Mobile / GPU tier detection / performance optimization
+* Postprocessing effects
+  * Academy Color Encoding System filmic tone mapping
+  * Brightness / contrast enhancement
+  * Bloom
+  * Screen space ambient occlusion (N8AO)
+  * Depth of field
+  * Contact shadows
+  * Subpixel morphological anti-aliasing
+
+# React + TypeScript + Vit
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
