@@ -1,6 +1,6 @@
 # React Three Fiber Demo
 
-Live [Demo](https://web3d-lab.onrender.com)
+Live [Demo](https://ross-web3d-lab.onrender.com)
 
 Featuring:
 * HDR environment map with custom ground projection
