@@ -74,7 +74,7 @@ button:focus-visible {
 
 @media (pointer: coarse) {
   html, body {
-    height: 180dvh;
+    height: 150dvh;
   }
 
   body {

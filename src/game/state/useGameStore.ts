@@ -7,6 +7,8 @@ export type GameRefs = {
 };
 
 type GameState = {
+  initialFramesRendered: boolean;
+  setInitialFramesRendered: (value: boolean) => void;
   paused: boolean;
   refs: GameRefs;
   setRef: (k: keyof GameRefs, v: THREE.Object3D | undefined) => void;
@@ -16,6 +18,8 @@ type GameState = {
 };
 
 export const useGameStore = create<GameState>(set => ({
+  initialFramesRendered: false,
+  setInitialFramesRendered: (value: boolean) => set({ initialFramesRendered: value }),
   paused: false,
   refs: {},
   setRef: (k, v) => set(s => ({ refs: { ...s.refs, [k]: v } })),

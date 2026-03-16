@@ -1,5 +1,5 @@
-import { FlyControls, OrbitControls, Stats, useDetectGPU } from "@react-three/drei";
-import { Canvas, type Dpr } from "@react-three/fiber";
+import { FlyControls, OrbitControls, Stats, useDetectGPU, useProgress } from "@react-three/drei";
+import { Canvas, useFrame, type Dpr } from "@react-three/fiber";
 import { useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { backgroundRotation, rotatingSceneForBackgroundRotation } from "../game/scenes/SandboxScene";
@@ -8,7 +8,10 @@ import { rotateY } from "../game/utility/transforms";
 
 export function GameCanvas({ children }: { children: React.ReactNode }) {
   const hdrPath = useGameStore(state => state.hdrPath);
+  const initialFramesRendered = useGameStore(state => state.initialFramesRendered);
   const gpuTier = useDetectGPU();
+  const { progress: loadingProgress } = useProgress();
+
   const [dragControlsEnabled, setDragControlsEnabled] = useState(true);
   const [statsEnabled, setStatsEnabled] = useState(true);
 
@@ -75,7 +78,22 @@ export function GameCanvas({ children }: { children: React.ReactNode }) {
           onPointerUp={() => setDragControlsEnabled(true)}
           onPointerCancel={() => setDragControlsEnabled(true)}
           onClick={() => setStatsEnabled(flag => !flag)}
-        />
+        >
+          {(loadingProgress < 100 || !initialFramesRendered) && (
+            /* center the loading text */
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "100%",
+                height: "100%",
+              }}
+            >
+              Loading... {Math.min(loadingProgress, 99).toFixed(0)}%
+            </div>
+          )}
+        </div>
       )}
       {true && (
         <div
@@ -96,6 +114,7 @@ export function GameCanvas({ children }: { children: React.ReactNode }) {
         dpr={dpr}
         style={{
           ...(!hdrPath && { background: 'gray' }),
+          visibility: loadingProgress < 100 || !initialFramesRendered ? "hidden" : "visible",
         }}
         flat
         gl={{

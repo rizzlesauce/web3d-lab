@@ -59,7 +59,8 @@ export function SandboxScene() {
   const gpuTier = useDetectGPU();
   const hdrPath = useGameStore(state => state.hdrPath);
   const setHdrPath = useGameStore(state => state.setHdrPath);
-  const firstFrameRef = useRef(true);
+  const setInitialFramesRendered = useGameStore(state => state.setInitialFramesRendered);
+  const frameRef = useRef(0);
   const gpuTierRef = useRef(gpuTier);
 
   const sunPosition = useMemo(() => {
@@ -163,9 +164,7 @@ export function SandboxScene() {
   }, [gpuTier]);
 
   useFrame((state, _delta) => {
-    if (firstFrameRef.current) {
-      firstFrameRef.current = false;
-
+    if (frameRef.current === 0) {
       if (gpuTierRef.current.tier >= 2 || (true && allowingHigherTier1Quality && gpuTierRef.current.tier >= 1)) {
         state.gl.shadowMap.type = THREE.PCFSoftShadowMap;
       } else if (true && gpuTierRef.current.tier >= 1) {
@@ -175,6 +174,10 @@ export function SandboxScene() {
       }
     }
 
+    if (frameRef.current === 2) {
+      setInitialFramesRendered(true);
+    }
+
     if (false) {
       if (rotatingSceneForBackgroundRotation) {
         console.log(rotateY(state.camera.position, backgroundRotation));
@@ -182,6 +185,8 @@ export function SandboxScene() {
         console.log(state.camera.position);
       }
     }
+
+    frameRef.current += 1;
   });
 
   return (
