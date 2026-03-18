@@ -10,6 +10,8 @@ import { useGpuTier } from "../game/utility/useGpuTier";
 export function GameCanvas({ children }: { children: React.ReactNode }) {
   const hdrPath = useGameStore(state => state.hdrPath);
   const initialFramesRendered = useGameStore(state => state.initialFramesRendered);
+  const paused = useGameStore(state => state.paused);
+  const togglePaused = useGameStore(state => state.togglePaused);
   const gpuTier = useGpuTier();
   const { progress: loadingProgress } = useProgress();
 
@@ -78,7 +80,17 @@ export function GameCanvas({ children }: { children: React.ReactNode }) {
           onPointerDown={() => setDragControlsEnabled(false)}
           onPointerUp={() => setDragControlsEnabled(true)}
           onPointerCancel={() => setDragControlsEnabled(true)}
-          onClick={() => setStatsEnabled(flag => !flag)}
+          onClick={() => {
+            if (statsEnabled) {
+              setStatsEnabled(false);
+            } else {
+              const wasPaused = paused;
+              togglePaused();
+              if (wasPaused) {
+                setStatsEnabled(true);
+              }
+            }
+          }}
         >
           {(loadingProgress < 100 || !initialFramesRendered) && (
             /* center the loading text */

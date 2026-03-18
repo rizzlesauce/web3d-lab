@@ -91,30 +91,6 @@ export function SandboxScene() {
   const cubeCameraMaterialRef2 = useRef<THREE.MeshPhysicalMaterial>(null);
 
   const camera = useThree((s) => s.camera)
-  const invalidate = useThree((state) => state.invalidate);
-  const clock = useThree((state) => state.clock);
-
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        // Tab is inactive - pause animations/loop
-        clock.stop();
-      } else {
-        // Tab is active - resume
-        clock.start();
-        // If using frameloop="demand", force a render
-        if (false) {
-          invalidate();
-        }
-      }
-    }
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    }
-  }, [clock, invalidate]);
 
   useEffect(() => {
     camera.layers.enable(cubeCameraLayer)
