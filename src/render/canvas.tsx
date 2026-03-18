@@ -129,8 +129,8 @@ export function GameCanvas({ children }: { children: React.ReactNode }) {
         }}
         camera={{
           fov: 65,
-          near: 0.1,
-          far: 500,
+          near: 0.09,
+          far: 100,
           position: cameraPos,
         }}
       >
