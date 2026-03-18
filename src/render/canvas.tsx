@@ -150,7 +150,7 @@ export function GameCanvas({ children }: { children: React.ReactNode }) {
             //domElement={elementRef.current}
             makeDefault
             dragToLook
-            movementSpeed={8}
+            movementSpeed={5}
             rollSpeed={2 * Math.PI / 20}
           />
         )}
