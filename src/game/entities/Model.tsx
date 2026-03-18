@@ -39,32 +39,78 @@ export function Model({
         const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
 
         mats.forEach(mat => {
+          let materialPath = `${modelPath}:${obj.name}:${mat.name}`;
+          let materialMapName = '';
+
           if (mat instanceof THREE.Material) {
+            const { userData } = mat;
+
             if (debug) {
-              console.log(obj.name, {
-                side: mat.side,
+              console.log(materialPath, {
+                side: mat.side === THREE.DoubleSide ? "DoubleSide" : mat.side === THREE.FrontSide ? "FrontSide" : "BackSide",
                 transparent: mat.transparent,
+                alphaHash: mat.alphaHash,
                 alphaTest: mat.alphaTest,
+                depthTest: mat.depthTest,
                 depthWrite: mat.depthWrite,
                 alphaToCoverage: mat.alphaToCoverage,
+                userData,
               });
             }
 
-            if (mat instanceof THREE.MeshStandardMaterial) {
+            if (false && mat instanceof THREE.MeshStandardMaterial) {
               if (mat.map) {
+                materialMapName = mat.map.name;
+                materialPath = `${materialPath}:${materialMapName}`;
                 if (debug) {
-                  console.log("Found material with map:", mat.map.name);
+                  console.log("Found material with map:", materialPath);
                 }
-                if (mat.transparent && !alphaBlendMaps.has(mat.map.name)) {
-                  if (debug) {
-                    console.log("Making transparent material CLIPPED:", mat.map.name);
-                  }
-                  mat.transparent = false;
-                  mat.alphaTest = 0.5;
-                  mat.depthWrite = true;
-                  mat.alphaToCoverage = true;
-                  mat.needsUpdate = true;
+              }
+
+              let alphaTest: number | undefined;
+
+              if ((userData.three_alphaBlend || alphaBlendMaps.has(materialMapName)) && (!mat.transparent || mat.depthWrite)) {
+                if (true || debug) {
+                  console.log("Making material ALPHA BLEND:", materialPath);
                 }
+                mat.transparent = true;
+                mat.depthWrite = false;
+                mat.needsUpdate = true;
+              } else if (userData.three_alphaHash && !mat.alphaHash) {
+                if (true || debug) {
+                  console.log("Making material ALPHA HASH (Dithered):", materialPath);
+                }
+
+                mat.alphaHash = true;
+                mat.transparent = false;
+                mat.depthWrite = true;
+                mat.needsUpdate = true;
+              } else if (mat.transparent) {
+                if (true || debug) {
+                  console.log("Making transparent material CLIPPED:", materialPath);
+                }
+
+                if (mat.alphaTest > 0) {
+                  alphaTest = mat.alphaTest;
+                } else {
+                  alphaTest = 0.5;
+                }
+                mat.alphaToCoverage = true;
+                mat.transparent = false;
+                mat.depthWrite = true;
+                mat.needsUpdate = true;
+              }
+
+              if (typeof userData.three_alphaTest === "number" && userData.three_alphaTest > 0 && userData.three_alphaTest !== mat.alphaTest) {
+                if (true || debug) {
+                  console.log("Making transparent material use custom ALPHA TEST:", materialPath, userData.three_alphaTest);
+                }
+                alphaTest = userData.three_alphaTest;
+              }
+
+              if (alphaTest !== undefined && alphaTest !== mat.alphaTest) {
+                mat.alphaTest = alphaTest;
+                mat.needsUpdate = true;
               }
             }
           }

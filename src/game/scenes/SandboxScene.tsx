@@ -401,7 +401,6 @@ export function SandboxScene() {
         {true && !usingSimplerTree && (
           <Model
             modelPath="/models/tree_gn_export.glb"
-            alphaBlendMaps={new Set(['BarkB_Col-BarkB_Alpha'])}
             position={[7, 0, 5]}
             rotation={[0, Math.PI / 4, 0]}
             //scale={[0.8, 0.8, 0.8]}
