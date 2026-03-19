@@ -66,7 +66,7 @@ export function SandboxScene() {
   const gpuTierRef = useRef(gpuTier);
   const [searchParams, _setSearchParams] = useSearchParams();
 
-  const usingSimplerTree = ['true', 't', '1'].includes(searchParams.get("altTree")?.toLowerCase() || "");
+  const usingSimplerTree = gpuTier.tier < 1 && !['false', 'f', '0'].includes(searchParams.get("altTree")?.toLowerCase() || "");
 
   const sunPosition = useMemo(() => {
     return new THREE.Vector3(8, 12, 6);
