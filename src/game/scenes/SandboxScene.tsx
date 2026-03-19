@@ -341,11 +341,13 @@ export function SandboxScene() {
             castShadow
             receiveShadow
           >
-            <sphereGeometry args={[
-              0.8,
-              gpuTier.tier >= 3 ? 32 : 16,
-              gpuTier.tier >= 3 ? 32 : 12,
-            ]} />
+            <sphereGeometry
+              args={[
+                0.8,
+                gpuTier.tier >= 3 ? 32 : gpuTier.tier >= 2 ? 24 : 16,
+                gpuTier.tier >= 3 ? 32 : gpuTier.tier >= 2 ? 20 : 12,
+              ]}
+            />
             <meshStandardMaterial
               color="aqua"
               roughness={0.05}
@@ -417,11 +419,13 @@ export function SandboxScene() {
                 //castShadow
                 //receiveShadow
               >
-                <sphereGeometry args={[
-                  0.999,
-                  gpuTier.tier >= 3 ? 32 : 16,
-                  gpuTier.tier >= 3 ? 32 : 12,
-                ]} />
+                <sphereGeometry
+                  args={[
+                    0.999,
+                    gpuTier.tier >= 3 ? 32 : gpuTier.tier >= 2 ? 24 : 16,
+                    gpuTier.tier >= 3 ? 32 : gpuTier.tier >= 2 ? 20 : 12,
+                  ]}
+                />
                 <meshStandardMaterial
                   color="pink"
                   metalness={1}
@@ -457,11 +461,13 @@ export function SandboxScene() {
                 castShadow
                 receiveShadow
               >
-                <sphereGeometry args={[
-                  1,
-                  gpuTier.tier >= 3 ? 32 : 16,
-                  gpuTier.tier >= 3 ? 32 : 12,
-                ]} />
+                <sphereGeometry
+                  args={[
+                    1,
+                    gpuTier.tier >= 3 ? 32 : gpuTier.tier >= 2 ? 24 : 16,
+                    gpuTier.tier >= 3 ? 32 : gpuTier.tier >= 2 ? 20 : 12,
+                  ]}
+                />
                 <meshStandardMaterial
                   color="pink"
                   ref={cubeCameraMaterialRef}
@@ -523,17 +529,17 @@ export function SandboxScene() {
 
       {true && gpuTier.tier >= 0 && (
         <AtmospherePollenCylinder
-          count={gpuTier.tier >= 3 ? 30 : 30}
+          count={30}
           texturePath="/textures/particle_sprite_soft_warm.png"
           color="#fff4c8"
-          size={gpuTier.tier >= 3 ? 0.8 : 0.8}
-          opacity={gpuTier.tier >= 3 ? 0.32 : 0.32}
+          size={0.8}
+          opacity={0.32}
           radius={14}
           minY={0.6}
           maxY={8}
           groundY={0.05}
           fadeY={0.27}
-          baseWind={gpuTier.tier >= 3 ? [0.035, -0.18, 0.01] : [0.035, -0.18, 0.01]}
+          baseWind={[0.035, -0.18, 0.01]}
           sunlightDirection={sceneRotatedSunlightDirection}
           sunGlowStrength={1.4}
           spawnFadeInTime={0.7}
@@ -565,7 +571,7 @@ export function SandboxScene() {
           multisampling={0}
         >
           <>
-            {true && (gpuTier.tier >= 3 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
+            {true && (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
               <N8AO
                 intensity={4}
                 halfRes={true || gpuTier.tier < 3}
@@ -577,7 +583,7 @@ export function SandboxScene() {
               />
             )}
 
-            {true && (gpuTier.tier >= 3 || (true && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
+            {true && (gpuTier.tier >= 2 || (true && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
               <Bloom
                 intensity={0.22}
                 luminanceThreshold={1.05}
@@ -606,7 +612,7 @@ export function SandboxScene() {
               />
             )}
 
-            {true && (gpuTier.tier >= 3 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
+            {true && (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
               <DepthOfField
                 focusDistance={0.02}
                 focalLength={0.01}
@@ -614,7 +620,7 @@ export function SandboxScene() {
               />
             )}
 
-            {true && (gpuTier.tier >= 3 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
+            {true && (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
               <SMAA />
             )}
 
