@@ -2,6 +2,7 @@ import { ContactShadows, Environment, GizmoHelper, GizmoViewport, Grid, useProgr
 import { useFrame, useThree } from "@react-three/fiber";
 import { Bloom, BrightnessContrast, DepthOfField, EffectComposer, HueSaturation, N8AO, SMAA, ToneMapping, Vignette } from "@react-three/postprocessing";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import * as THREE from "three";
 import { AtmospherePollenCylinder } from "../entities/AtmospherePollenCylinder";
 import { Gloria } from "../entities/Gloria";
@@ -63,8 +64,9 @@ export function SandboxScene() {
   const setInitialFramesRendered = useGameStore(state => state.setInitialFramesRendered);
   const frameRef = useRef(0);
   const gpuTierRef = useRef(gpuTier);
+  const [searchParams, _setSearchParams] = useSearchParams();
 
-  const usingSimplerTree = gpuTier.tier < 1;
+  const usingSimplerTree = ['true', 't', '1'].includes(searchParams.get("altTree")?.toLowerCase() || "");
 
   const sunPosition = useMemo(() => {
     return new THREE.Vector3(8, 12, 6);
