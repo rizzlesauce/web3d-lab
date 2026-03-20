@@ -18,6 +18,7 @@ import { WarriorGirl } from "../entities/WarriorGirl";
 import { Woman } from "../entities/Woman";
 import { useGameStore } from "../state/useGameStore";
 import { rotateY } from "../utility/transforms";
+import { asType } from "../utility/types";
 import { useGpuTier } from "../utility/useGpuTier";
 
 const hdrs = [
@@ -573,13 +574,13 @@ export function SandboxScene() {
           <>
             {true && (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
               <N8AO
-                intensity={4}
-                halfRes={true || gpuTier.tier < 3}
-                //color="black"
-                aoRadius={1.0}
-                distanceFalloff={1.0}
-                aoSamples={16}
-                denoiseRadius={16}
+                intensity={2}
+                halfRes={asType<boolean>(false) || gpuTier.tier < 3}
+                quality={gpuTier.tier >= 3 ? 'high' : gpuTier.tier >= 2 ? 'medium' : gpuTier.tier >= 1 ? 'low' : 'performance'}
+                aoRadius={.6}
+                distanceFalloff={0.6}
+                aoSamples={gpuTier.tier >= 3 ? 24 : gpuTier.tier >= 2 ? 16 : gpuTier.tier >= 1 ? 8 : 4}
+                denoiseRadius={gpuTier.tier >= 3 ? 8 : gpuTier.tier >= 2 ? 6 : gpuTier.tier >= 1 ? 4 : 2}
               />
             )}
 
