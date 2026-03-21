@@ -1,24 +1,64 @@
 import { useAnimations, useGLTF } from "@react-three/drei";
-import { useEffect } from "react";
+import { useFrame } from "@react-three/fiber";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { enableShadows } from "../utility/shadows";
 import { asType } from "../utility/types";
 
 export type ModelTransformProps = {
   position?: [number, number, number]
   rotation?: [number, number, number]
   scale?: [number, number, number]
-  alphaBlendMaps?: Set<string>
-  debug?: boolean
 };
 
 type ModelProps = ModelTransformProps & {
   modelPath: string,
+  debug?: boolean
+  debugBoundingBoxes?: boolean
+  alphaBlendMaps?: Set<string>
+  updatingSkinnedMeshBoundingSphere?: boolean
+  skinnedMeshFrustumCulledOverride?: boolean
 };
 
 type RenderMethod = 'opaque' | 'clip' | 'blend' | 'dither';
 const RenderMethodValues: RenderMethod[] = ['opaque', 'clip', 'blend', 'dither'];
 const RenderMethodValueSet = new Set<RenderMethod>(RenderMethodValues);
+
+const worldSphere = new THREE.Sphere();
+
+function updateWorldBoundingSphereHelper(skinnedMesh: THREE.SkinnedMesh, helperMesh: THREE.Mesh) {
+  // Copy local-space bounding sphere and convert it to world space
+  worldSphere.copy(skinnedMesh.boundingSphere).applyMatrix4(skinnedMesh.matrixWorld)
+
+  // Update your debug sphere mesh in world space
+  helperMesh.position.copy(worldSphere.center)
+  helperMesh.scale.setScalar(worldSphere.radius)
+}
+
+function attachBoundingSphereHelper(mesh: THREE.SkinnedMesh) {
+  // TODO: get this working to show the actual bounding sphere
+
+  if (!mesh.boundingSphere) {
+    mesh.computeBoundingSphere();
+  }
+
+  const sphere = mesh.boundingSphere
+  if (!sphere) return
+
+  const geo = new THREE.SphereGeometry(1, 16, 16)
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0xff00ff,
+    wireframe: true,
+    depthTest: false,
+    depthWrite: false,
+  })
+
+  const helper = new THREE.Mesh(geo, mat)
+  helper.name = `${mesh.name}_boundsphere`
+
+  updateWorldBoundingSphereHelper(mesh, helper);
+
+  return helper
+}
 
 export function Model({
   modelPath,
@@ -27,28 +67,133 @@ export function Model({
   scale = [1, 1, 1],
   alphaBlendMaps = new Set<string>(),
   debug = false,
+  debugBoundingBoxes = false,
+  updatingSkinnedMeshBoundingSphere = false,
+  skinnedMeshFrustumCulledOverride = false,
 } : ModelProps) {
   const { scene, animations } = useGLTF(modelPath);
 
   const { actions } = useAnimations(animations, scene);
 
+  const [meshesNeedingPerFrameBoundaryUpdate, setMeshesNeedingPerFrameBoundaryUpdate] = useState<THREE.SkinnedMesh[]>([]);
+  const boxHelpersRef = useRef<THREE.BoxHelper[]>([]);
+  const sphereHelpersRef = useRef<THREE.Mesh[]>([]);
+
   useEffect(() => {
-    enableShadows(scene);
+    const boxHelpers: THREE.BoxHelper[] = [];
+    const sphereHelpers: THREE.Mesh[] = [];
 
     if (debug) {
-      console.log("Model Debug Info:", modelPath)
+      meshesNeedingPerFrameBoundaryUpdate.forEach(mesh => {
+        if (debugBoundingBoxes) {
+          const boxHelper = new THREE.BoxHelper(mesh, 0xffff00);
+          scene.add(boxHelper);
+          boxHelpers.push(boxHelper);
+        }
+
+        const sphereHelper = attachBoundingSphereHelper(mesh);
+        if (sphereHelper) {
+          scene.add(sphereHelper);
+          sphereHelpers.push(sphereHelper);
+        }
+      });
+
+      boxHelpersRef.current = boxHelpers;
+      sphereHelpersRef.current = sphereHelpers;
     }
 
+    return () => {
+      boxHelpers.forEach(helper => {
+        helper.parent?.remove(helper);
+      });
+      boxHelpersRef.current = [];
+
+      sphereHelpers.forEach(helper => {
+        helper.parent?.remove(helper);
+      });
+      sphereHelpersRef.current = [];
+    };
+  }, [scene, meshesNeedingPerFrameBoundaryUpdate, debug, debugBoundingBoxes]);
+
+  useFrame(() => {
+    const boxHelpers = boxHelpersRef.current;
+    const sphereHelpers = sphereHelpersRef.current;
+
+    meshesNeedingPerFrameBoundaryUpdate.forEach((mesh, meshIndex) => {
+      if (asType<boolean>(true)) {
+        if (debugBoundingBoxes) {
+          // not needed for frustum culling
+          mesh.computeBoundingBox();
+        }
+        mesh.computeBoundingSphere();
+      }
+
+      if (debug) {
+        const sphereHelper = sphereHelpers[meshIndex];
+
+        if (sphereHelper) {
+          updateWorldBoundingSphereHelper(mesh, sphereHelper);
+        }
+      }
+    });
+
+    if (debug && debugBoundingBoxes) {
+      boxHelpers.forEach(helper => {
+        helper.update();
+      });
+    }
+  });
+
+  useEffect(() => {
+    if (debug) {
+      console.log("Model:", modelPath)
+    }
+
+    const newMeshesNeedingPerFrameBoundaryUpdate: THREE.SkinnedMesh[] = [];
+
     scene.traverse(obj => {
-      if (obj instanceof THREE.Mesh && obj.isMesh) {
-        const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
+      const objPath = `${modelPath}:${obj.name}`;
+
+      if (debug) {
+        console.log("Traversing object:", objPath, obj);
+      }
+
+      let {
+        frustumCulled,
+      } = obj;
+
+      const { userData: objUserData } = obj;
+
+      if (typeof objUserData.frustomCulled === 'boolean') {
+        if (asType<boolean>(true) || debug) {
+          console.log("userData.frustumCulled:", objUserData.frustumCulled, objPath);
+        }
+        frustumCulled = objUserData.frustumCulled;
+      }
+
+      const mesh = obj as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+
+        if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) {
+          const skinnedMesh = mesh as THREE.SkinnedMesh;
+          if (updatingSkinnedMeshBoundingSphere) {
+            newMeshesNeedingPerFrameBoundaryUpdate.push(skinnedMesh);
+          }
+          if (skinnedMeshFrustumCulledOverride !== undefined) {
+            frustumCulled = skinnedMeshFrustumCulledOverride;
+          }
+        }
+
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
 
         mats.forEach(mat => {
           if (!(mat instanceof THREE.Material)) {
             return;
           }
 
-          let materialPath = `${modelPath}:${obj.name}:${mat.name}`;
+          let materialPath = `${objPath}:${mat.name}`;
           let materialMapName = '';
 
           const { userData } = mat;
@@ -97,6 +242,14 @@ export function Model({
               'userData',
               userData,
             );
+          }
+
+          const userDataFrustumCulled = userData.frustumCulled;
+          if (typeof userDataFrustumCulled === 'boolean') {
+            if (asType<boolean>(true) || debug) {
+              console.log("Material sets userData.frustumCulled", userDataFrustumCulled, materialPath);
+            }
+            frustumCulled = userDataFrustumCulled;
           }
 
           const userDataOpaque = userData.three_opaque;
@@ -287,10 +440,23 @@ export function Model({
           }
         });
       }
+
+      if (frustumCulled !== obj.frustumCulled) {
+        if (asType<boolean>(true) || debug) {
+          console.log(`Making object use frustumCulled=${frustumCulled}`, objPath);
+        }
+        obj.frustumCulled = frustumCulled;
+      }
     });
 
+    setMeshesNeedingPerFrameBoundaryUpdate(newMeshesNeedingPerFrameBoundaryUpdate);
+
     Object.values(actions)[0]?.play();
-  }, [scene]);
+  }, [
+    scene,
+    updatingSkinnedMeshBoundingSphere,
+    skinnedMeshFrustumCulledOverride,
+  ]);
 
   return (
     <group
