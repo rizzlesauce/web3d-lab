@@ -1,5 +1,8 @@
 import * as THREE from "three";
 import { create } from "zustand";
+import { createInput, type InputState } from "../systems/input";
+
+type Updater<T> = T | ((prev: T) => T);
 
 export type GameRefs = {
   player?: THREE.Object3D;
@@ -7,6 +10,8 @@ export type GameRefs = {
 };
 
 type GameState = {
+  input: InputState;
+  setInput: (input: Updater<InputState>) => void;
   initialFramesRendered: boolean;
   setInitialFramesRendered: (value: boolean) => void;
   paused: boolean;
@@ -18,8 +23,14 @@ type GameState = {
 };
 
 export const useGameStore = create<GameState>(set => ({
+  input: createInput(),
+  setInput: inputOrUpdater => set(s => ({
+    input: typeof inputOrUpdater === "function"
+      ? inputOrUpdater(s.input)
+      : inputOrUpdater
+  })),
   initialFramesRendered: false,
-  setInitialFramesRendered: (value: boolean) => set({ initialFramesRendered: value }),
+  setInitialFramesRendered: value => set({ initialFramesRendered: value }),
   paused: false,
   refs: {},
   setRef: (k, v) => set(s => ({ refs: { ...s.refs, [k]: v } })),

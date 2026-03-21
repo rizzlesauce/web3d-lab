@@ -1,3 +1,5 @@
+import type { Dispatch, SetStateAction } from "react";
+
 export type InputState = {
   forward: boolean;
   back: boolean;
@@ -30,26 +32,26 @@ export function createInput(): InputState {
   };
 }
 
-export function bindKeyboard(input: InputState) {
+export function bindKeyboard(setInput: Dispatch<SetStateAction<InputState>>) {
   const onKey = (down: boolean) => (e: KeyboardEvent) => {
     switch (e.code) {
       case 'KeyW':
-        input.forward = down;
+        setInput(input => ({ ...input, forward: down }));
         break;
       case 'KeyS':
-        input.back = down;
+        setInput(input => ({ ...input, back: down }));
         break;
       case 'KeyA':
-        input.left = down;
+        setInput(input => ({ ...input, left: down }));
         break;
       case 'KeyD':
-        input.right = down;
+        setInput(input => ({ ...input, right: down }));
         break;
       case 'Space':
-        input.jump = down;
+        setInput(input => ({ ...input, jump: down }));
         break;
       case 'ShiftLeft':
-        input.sprint = down;
+        setInput(input => ({ ...input, sprint: down }));
         break;
     }
   };
@@ -71,6 +73,7 @@ export function bindMouseLook() {
   const onMove = (_e: MouseEvent) => {
     // store deltas wherever you keep input; or route into store
   };
+
   window.addEventListener('mousemove', onMove);
   return () => window.removeEventListener('mousemove', onMove);
 }

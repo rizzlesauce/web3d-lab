@@ -5,10 +5,12 @@ import * as THREE from "three";
 import { backgroundRotation, rotatingSceneForBackgroundRotation } from "../game/scenes/SandboxScene";
 import { useGameStore } from "../game/state/useGameStore";
 import { rotateY } from "../game/utility/transforms";
+import { asType } from "../game/utility/types";
 import { useGpuTier } from "../game/utility/useGpuTier";
 
 export function GameCanvas({ children }: { children: React.ReactNode }) {
   const hdrPath = useGameStore(state => state.hdrPath);
+  const sprint = useGameStore(state => state.input.sprint);
   const initialFramesRendered = useGameStore(state => state.initialFramesRendered);
   const paused = useGameStore(state => state.paused);
   const togglePaused = useGameStore(state => state.togglePaused);
@@ -147,7 +149,7 @@ export function GameCanvas({ children }: { children: React.ReactNode }) {
         }}
       >
         {/* Camera controls */}
-        {true || gpuTier.isMobile ? (
+        {asType<boolean>(true) || gpuTier.isMobile ? (
           <OrbitControls
             makeDefault
             enabled={dragControlsEnabled}
@@ -162,7 +164,7 @@ export function GameCanvas({ children }: { children: React.ReactNode }) {
             //domElement={elementRef.current}
             makeDefault
             dragToLook
-            movementSpeed={5}
+            movementSpeed={sprint ? 1.0 : 0.1}
             rollSpeed={2 * Math.PI / 20}
           />
         )}
