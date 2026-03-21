@@ -26,6 +26,8 @@ type AtmospherePollenProps = {
   spawnFadeInTime?: number;
 };
 
+const timer = new THREE.Timer();
+
 export function AtmospherePollenCylinder({
   count = 260,
   texturePath = "/particle_sprite_soft_warm.png",
@@ -162,9 +164,11 @@ export function AtmospherePollenCylinder({
     (data.geometry.getAttribute("aBrightness") as THREE.BufferAttribute).needsUpdate = true;
   }, [count]);
 
-  useFrame((state, delta) => {
+  useFrame((_state, delta) => {
     const dt = Math.min(delta, 1 / 10);
-    const t = state.clock.elapsedTime;
+
+    timer.update(delta);
+    const t = timer.getElapsed();
 
     const positions = data.positions;
     const velocities = data.velocities;
