@@ -155,9 +155,7 @@ export function SandboxScene() {
     if (frameRef.current === 0) {
       const gpuTier = gpuTierRef.current;
 
-      if (gpuTier.tier >= 2 || (true && allowingHigherTier1Quality && gpuTier.tier >= 0)) {
-        state.gl.shadowMap.type = THREE.PCFSoftShadowMap;
-      } else if (true && gpuTier.tier >= 1) {
+      if (true && gpuTier.tier >= 1) {
         state.gl.shadowMap.type = THREE.PCFShadowMap;
       } else if (true) {
         state.gl.shadowMap.type = THREE.BasicShadowMap;
