@@ -1,9 +1,9 @@
-import * as React from "react";
-import * as THREE from "three/webgpu";
-import { useFrame, useThree } from "@react-three/fiber";
-import { Environment as DreiEnvironment, useEnvironment } from "@react-three/drei";
-import { GroundedSkybox } from "three/addons/objects/GroundedSkybox.js";
 import type { EnvironmentProps as DreiEnvironmentProps } from "@react-three/drei";
+import { Environment as DreiEnvironment, useEnvironment } from "@react-three/drei";
+import { useThree } from "@react-three/fiber";
+import * as React from "react";
+import { GroundedSkybox } from "three/addons/objects/GroundedSkybox.js";
+import * as THREE from "three/webgpu";
 
 type GroundOptions =
   | boolean
@@ -125,7 +125,6 @@ function WebGPUGroundEnvironment(props: WebGPUEnvironmentProps) {
   } = props;
 
   const defaultScene = useThree((state) => state.scene);
-  const camera = useThree((state) => state.camera);
   const scene = resolveScene(sceneProp as any, defaultScene);
 
   const loadedTexture = useEnvironment(
@@ -205,17 +204,6 @@ function WebGPUGroundEnvironment(props: WebGPUEnvironmentProps) {
     environmentIntensity,
     environmentRotation,
   ]);
-
-  /*
-  useFrame(() => {
-    if (!groundedSkybox) return;
-
-    // GroundedSkybox is intended to stay centered around the camera.
-    groundedSkybox.position.x = camera.position.x;
-    groundedSkybox.position.z = camera.position.z;
-    groundedSkybox.position.y = height;
-  });
-  */
 
   React.useEffect(() => {
     return () => {

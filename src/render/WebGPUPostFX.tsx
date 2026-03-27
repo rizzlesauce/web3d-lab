@@ -1,36 +1,36 @@
-import { useEffect, useMemo } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import * as THREE from 'three/webgpu'
+import { useEffect, useMemo } from 'react'
 import type { WebGPURenderer } from 'three/webgpu'
+import * as THREE from 'three/webgpu'
 import { RenderPipeline } from 'three/webgpu'
 
 import {
-  pass,
-  mrt,
-  output,
+  convertToTexture,
   emissive,
-  metalness,
-  normalView,
   float,
-  vec2,
-  vec4,
-  screenUV,
   length,
-  smoothstep,
+  metalness,
+  mrt,
+  normalView,
+  output,
+  pass,
   renderOutput,
   roughness,
-  convertToTexture,
+  screenUV,
+  smoothstep,
+  vec2,
+  vec4,
 } from 'three/tsl'
 
-import { ao } from 'three/addons/tsl/display/GTAONode.js'
 import { bloom } from 'three/addons/tsl/display/BloomNode.js'
 import { dof } from 'three/addons/tsl/display/DepthOfFieldNode.js'
-import { asType } from '../game/utility/types'
-import { ssr } from 'three/examples/jsm/tsl/display/SSRNode.js'
+import { ao } from 'three/addons/tsl/display/GTAONode.js'
+import { denoise } from 'three/examples/jsm/tsl/display/DenoiseNode.js'
 import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js'
 import { smaa } from 'three/examples/jsm/tsl/display/SMAANode.js'
-import { denoise } from 'three/examples/jsm/tsl/display/DenoiseNode.js'
 import { ssgi } from 'three/examples/jsm/tsl/display/SSGINode.js'
+import { ssr } from 'three/examples/jsm/tsl/display/SSRNode.js'
+import { asType } from '../game/utility/types'
 
 type GpuTierLike = {
   tier: number
@@ -420,10 +420,12 @@ export function WebGPUPostFX({
 
   // Take over rendering so R3F doesn't also do its normal gl.render(scene, camera).
   useFrame(({ gl }) => {
-    if (pipeline) {
-      //gl.clear()
-      pipeline.render()
+    if (!gl || !pipeline) {
+      return
     }
+
+    gl.clear()
+    pipeline.render()
   }, 1)
 
   return null

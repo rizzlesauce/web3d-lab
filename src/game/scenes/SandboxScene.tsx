@@ -152,6 +152,7 @@ export function SandboxScene() {
 
   useEffect(() => {
     gl.setClearColor(0x000000, hdrPath ? 1 : 0);
+    gl.clear()
   }, [gl, hdrPath]);
 
   const shadowMapSize = useMemo(() => {
