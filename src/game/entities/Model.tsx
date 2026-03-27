@@ -1,7 +1,7 @@
 import { useAnimations, useGLTF } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { useEffect, useRef, useState } from "react";
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { asType } from "../utility/types";
 
 export type ModelTransformProps = {
@@ -17,6 +17,8 @@ type ModelProps = ModelTransformProps & {
   alphaBlendMaps?: Set<string>
   updatingSkinnedMeshBoundingSphere?: boolean
   skinnedMeshFrustumCulledOverride?: boolean
+  alphaToCoverageClip?: boolean
+  alphaToCoverageDither?: boolean
 };
 
 type RenderMethod = 'opaque' | 'clip' | 'blend' | 'dither';
@@ -70,6 +72,8 @@ export function Model({
   debugBoundingBoxes = false,
   updatingSkinnedMeshBoundingSphere = false,
   skinnedMeshFrustumCulledOverride = false,
+  alphaToCoverageClip = true,
+  alphaToCoverageDither = false,
 } : ModelProps) {
   const { scene, animations } = useGLTF(modelPath);
 
@@ -317,9 +321,7 @@ export function Model({
               depthTest = true;
               depthWrite = true;
               alphaTest = 0;
-              if (asType<boolean>(true)) {
-                alphaToCoverage = false;
-              }
+              alphaToCoverage = false;
               break;
 
             case 'clip':
@@ -328,9 +330,7 @@ export function Model({
               depthTest = true;
               depthWrite = true;
               alphaTest = alphaTest || 0.5;
-              if (asType<boolean>(true)) {
-                alphaToCoverage = true;
-              }
+              alphaToCoverage = alphaToCoverageClip;
               break;
 
             case 'blend':
@@ -339,9 +339,7 @@ export function Model({
               depthTest = true;
               depthWrite = false;
               alphaTest = 0;
-              if (asType<boolean>(true)) {
-                alphaToCoverage = false;
-              }
+              alphaToCoverage = false;
               break;
 
             case 'dither':
@@ -350,10 +348,7 @@ export function Model({
               depthTest = true;
               depthWrite = true;
               alphaTest = 0;
-              if (asType<boolean>(true)) {
-                // May have little to no impact
-                alphaToCoverage = true;
-              }
+              alphaToCoverage = alphaToCoverageDither;
               break;
           }
 

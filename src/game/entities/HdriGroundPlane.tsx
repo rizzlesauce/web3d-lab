@@ -1,13 +1,27 @@
 import { useLoader } from "@react-three/fiber";
-import { useEffect, useMemo, useRef } from "react";
-import * as THREE from "three";
+import { useEffect, useMemo } from "react";
 import { RGBELoader } from "three-stdlib";
-
-type Shader = {
-  uniforms: { [uniform: string]: THREE.IUniform };
-  vertexShader: string;
-  fragmentShader: string;
-};
+import {
+  asin,
+  atan,
+  clamp,
+  cos,
+  float,
+  length,
+  modelWorldMatrix,
+  normalize,
+  positionLocal,
+  pow,
+  sin,
+  smoothstep,
+  texture,
+  uniform,
+  uniformTexture,
+  vec2,
+  vec3,
+  vec4,
+} from "three/tsl";
+import * as THREE from "three/webgpu";
 
 type HdriGroundPlaneProps = {
   hdrPath: string;
@@ -29,9 +43,15 @@ type HdriGroundPlaneProps = {
   displacementScale?: number;
   displacementTiling?: number;
   planeSegments?: number;
+
+  seamOffset?: number;
+  seamPaddingPx?: number;
+
+  // Current safe device limit. Default matches your current error case.
+  maxTextureWidth?: number;
 };
 
-type SharedGroundProps = {
+type SharedProps = {
   hdrPath: string;
   size: number;
   y: number;
@@ -45,6 +65,9 @@ type SharedGroundProps = {
   groundContrast: number;
   shadowOpacity: number;
   usingInvisibleDepthPlane: boolean;
+  seamOffset: number;
+  seamPaddingPx?: number;
+  maxTextureWidth?: number;
 };
 
 type DisplacementProps = {
@@ -54,29 +77,16 @@ type DisplacementProps = {
   planeSegments: number;
 };
 
-type GroundProjectionUniforms = {
-  uEnvMap: { value: THREE.Texture };
-  uRadius: { value: number };
-  uFadeWidth: { value: number };
-  uProjectionHeight: { value: number };
-  uProjectionScale: { value: number };
-  uProjectionCurve: { value: number };
-  uRotation: { value: number };
-  uCenter: { value: THREE.Vector2 };
-  uGroundGain: { value: number };
-  uGroundContrast: { value: number };
+type GroundMaterials = {
+  visibleMaterial: THREE.Material;
+  shadowMaterial: THREE.Material;
+  depthMaterial: THREE.Material;
 };
 
-type GroundDisplacementUniforms = {
-  uDispMap: { value: THREE.Texture };
-  uDispScale: { value: number };
-  uDispTiling: { value: number };
-};
-
-type PlaneMaterialRefs = {
-  visibleMaterialRef: React.RefObject<THREE.MeshBasicMaterial | null>;
-  shadowMaterialRef: React.RefObject<THREE.ShadowMaterial | null>;
-  depthMaterialRef: React.RefObject<THREE.MeshBasicMaterial | null>;
+type DataTextureImageLike = {
+  data: Uint8Array | Uint16Array | Float32Array;
+  width: number;
+  height: number;
 };
 
 export function HdriGroundPlane(props: HdriGroundPlaneProps) {
@@ -98,9 +108,12 @@ export function HdriGroundPlane(props: HdriGroundPlaneProps) {
     displacementScale = 0.35,
     displacementTiling = 0.06,
     planeSegments = 128,
+    seamOffset = 0.0,
+    seamPaddingPx,
+    maxTextureWidth,
   } = props;
 
-  const shared: SharedGroundProps = {
+  const shared: SharedProps = {
     hdrPath,
     size,
     y,
@@ -114,6 +127,9 @@ export function HdriGroundPlane(props: HdriGroundPlaneProps) {
     groundContrast,
     shadowOpacity,
     usingInvisibleDepthPlane,
+    seamOffset,
+    seamPaddingPx,
+    maxTextureWidth,
   };
 
   if (noisePath) {
@@ -133,12 +149,31 @@ export function HdriGroundPlane(props: HdriGroundPlaneProps) {
   return <HdriGroundPlaneFlat shared={shared} />;
 }
 
-function HdriGroundPlaneFlat({ shared }: { shared: SharedGroundProps }) {
-  const refs = useGroundMaterialRefs();
+function HdriGroundPlaneFlat({ shared }: { shared: SharedProps }) {
   const hdrTexture = useLoader(RGBELoader, shared.hdrPath);
-
-  const projectionUniforms = useGroundProjectionUniforms({
+  const {
+    texture: paddedHdrTexture,
+    uScale: envUScale,
+    uBias: envUBias,
+  } = useSeamPaddedPanoramaTexture(
     hdrTexture,
+    shared.maxTextureWidth,
+    shared.seamPaddingPx
+  );
+
+  const geometry = useMemo(
+    () => new THREE.PlaneGeometry(shared.size, shared.size),
+    [shared.size]
+  );
+
+  useEffect(() => {
+    return () => geometry.dispose();
+  }, [geometry]);
+
+  const materials = useGroundMaterials({
+    hdrTexture: paddedHdrTexture,
+    envUScale,
+    envUBias,
     actualRadius: shared.actualRadius,
     fadeWidth: shared.fadeWidth,
     projectionHeight: shared.projectionHeight,
@@ -147,20 +182,22 @@ function HdriGroundPlaneFlat({ shared }: { shared: SharedGroundProps }) {
     rotation: shared.rotation,
     groundGain: shared.groundGain,
     groundContrast: shared.groundContrast,
+    seamOffset: shared.seamOffset,
+    shadowOpacity: shared.shadowOpacity,
+    usingInvisibleDepthPlane: shared.usingInvisibleDepthPlane,
   });
 
-  useVisibleGroundProjectionPatch({
-    materialRef: refs.visibleMaterialRef,
-    projectionUniforms,
-  });
+  useDisposeMaterials(materials);
+  useDisposeTexture(paddedHdrTexture);
 
   return (
     <GroundPlanes
-      refs={refs}
+      geometry={geometry}
       y={shared.y}
-      shadowOpacity={shared.shadowOpacity}
       usingInvisibleDepthPlane={shared.usingInvisibleDepthPlane}
-      planeGeometryArgs={[shared.size, shared.size]}
+      visibleMaterial={materials.visibleMaterial}
+      shadowMaterial={materials.shadowMaterial}
+      depthMaterial={materials.depthMaterial}
     />
   );
 }
@@ -169,15 +206,40 @@ function HdriGroundPlaneDisplaced({
   shared,
   displacement,
 }: {
-  shared: SharedGroundProps;
+  shared: SharedProps;
   displacement: DisplacementProps;
 }) {
-  const refs = useGroundMaterialRefs();
   const hdrTexture = useLoader(RGBELoader, shared.hdrPath);
+  const {
+    texture: paddedHdrTexture,
+    uScale: envUScale,
+    uBias: envUBias,
+  } = useSeamPaddedPanoramaTexture(
+    hdrTexture,
+    shared.maxTextureWidth,
+    shared.seamPaddingPx
+  );
   const noiseTexture = useLoader(THREE.TextureLoader, displacement.noisePath);
 
-  const projectionUniforms = useGroundProjectionUniforms({
-    hdrTexture,
+  const geometry = useMemo(
+    () =>
+      new THREE.PlaneGeometry(
+        shared.size,
+        shared.size,
+        displacement.planeSegments,
+        displacement.planeSegments
+      ),
+    [shared.size, displacement.planeSegments]
+  );
+
+  useEffect(() => {
+    return () => geometry.dispose();
+  }, [geometry]);
+
+  const materials = useGroundMaterials({
+    hdrTexture: paddedHdrTexture,
+    envUScale,
+    envUBias,
     actualRadius: shared.actualRadius,
     fadeWidth: shared.fadeWidth,
     projectionHeight: shared.projectionHeight,
@@ -186,62 +248,210 @@ function HdriGroundPlaneDisplaced({
     rotation: shared.rotation,
     groundGain: shared.groundGain,
     groundContrast: shared.groundContrast,
-  });
-
-  const displacementUniforms = useGroundDisplacementUniforms({
+    seamOffset: shared.seamOffset,
+    shadowOpacity: shared.shadowOpacity,
+    usingInvisibleDepthPlane: shared.usingInvisibleDepthPlane,
     noiseTexture,
     displacementScale: displacement.displacementScale,
     displacementTiling: displacement.displacementTiling,
   });
 
-  useVisibleGroundProjectionPatch({
-    materialRef: refs.visibleMaterialRef,
-    projectionUniforms,
-    displacementUniforms,
-  });
-
-  useDisplacementOnlyPatch({
-    materialRef: refs.shadowMaterialRef,
-    projectionUniforms,
-    displacementUniforms,
-  });
-
-  useDisplacementOnlyPatch({
-    materialRef: refs.depthMaterialRef,
-    projectionUniforms,
-    displacementUniforms,
-  });
+  useDisposeMaterials(materials);
+  useDisposeTexture(paddedHdrTexture);
 
   return (
     <GroundPlanes
-      refs={refs}
+      geometry={geometry}
       y={shared.y}
-      shadowOpacity={shared.shadowOpacity}
       usingInvisibleDepthPlane={shared.usingInvisibleDepthPlane}
-      planeGeometryArgs={[
-        shared.size,
-        shared.size,
-        displacement.planeSegments,
-        displacement.planeSegments,
-      ]}
+      visibleMaterial={materials.visibleMaterial}
+      shadowMaterial={materials.shadowMaterial}
+      depthMaterial={materials.depthMaterial}
     />
   );
 }
 
-function useGroundMaterialRefs(): PlaneMaterialRefs {
-  const visibleMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
-  const shadowMaterialRef = useRef<THREE.ShadowMaterial>(null);
-  const depthMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+function useSeamPaddedPanoramaTexture(
+  sourceTexture: THREE.Texture,
+  maxTextureWidth?: number,
+  paddingPx?: number,
+): {
+  texture: THREE.DataTexture;
+  uScale: number;
+  uBias: number;
+} {
+  return useMemo(() => {
+    const image = sourceTexture.image as Partial<DataTextureImageLike> | undefined;
 
-  return {
-    visibleMaterialRef,
-    shadowMaterialRef,
-    depthMaterialRef,
-  };
+    if (
+      !image ||
+      typeof image.width !== "number" ||
+      typeof image.height !== "number" ||
+      !image.data
+    ) {
+      throw new Error(
+        "HdriGroundPlane: expected source texture.image to have width, height, and typed-array data."
+      );
+    }
+
+    const srcData = image.data;
+    const srcWidth = image.width;
+    const srcHeight = image.height;
+
+    if (
+      !(
+        srcData instanceof Uint8Array ||
+        srcData instanceof Uint16Array ||
+        srcData instanceof Float32Array
+      )
+    ) {
+      throw new Error(
+        "HdriGroundPlane: unsupported texture.image.data type. Expected Uint8Array, Uint16Array, or Float32Array."
+      );
+    }
+
+    if (maxTextureWidth === undefined) {
+      maxTextureWidth = srcWidth;
+    }
+
+    if (maxTextureWidth < 3) {
+      throw new Error("HdriGroundPlane: maxTextureWidth must be at least 3.");
+    }
+
+    const texelCount = srcWidth * srcHeight;
+    const channels = srcData.length / texelCount;
+
+    if (!Number.isInteger(channels) || channels <= 0) {
+      throw new Error(
+        "HdriGroundPlane: could not determine channel count from source texture data."
+      );
+    }
+
+    const desiredPadding =
+      paddingPx ?? Math.min(64, Math.max(8, Math.ceil(srcWidth * 0.002)));
+
+    // Clamp padding so there is always at least 1 center texel.
+    const P = Math.max(0, Math.min(desiredPadding, Math.floor((maxTextureWidth - 1) / 2)));
+
+    // Width available for the center panorama after padding.
+    const centerWidth = Math.max(1, Math.min(srcWidth, maxTextureWidth - 2 * P));
+    const paddedWidth = centerWidth + 2 * P;
+
+    let resizedCenterData: Uint8Array | Uint16Array | Float32Array;
+    if (srcData instanceof Float32Array) {
+      resizedCenterData = new Float32Array(centerWidth * srcHeight * channels);
+    } else if (srcData instanceof Uint16Array) {
+      resizedCenterData = new Uint16Array(centerWidth * srcHeight * channels);
+    } else {
+      resizedCenterData = new Uint8Array(centerWidth * srcHeight * channels);
+    }
+
+    const srcRowStride = srcWidth * channels;
+    const centerRowStride = centerWidth * channels;
+
+    // Horizontal linear resample into the center width.
+    for (let y = 0; y < srcHeight; y++) {
+      const srcRowBase = y * srcRowStride;
+      const dstRowBase = y * centerRowStride;
+
+      for (let x = 0; x < centerWidth; x++) {
+        const srcX =
+          centerWidth === 1 ? 0 : (x * (srcWidth - 1)) / (centerWidth - 1);
+
+        const x0 = Math.floor(srcX);
+        const x1 = Math.min(x0 + 1, srcWidth - 1);
+        const t = srcX - x0;
+
+        for (let c = 0; c < channels; c++) {
+          const v0 = srcData[srcRowBase + x0 * channels + c];
+          const v1 = srcData[srcRowBase + x1 * channels + c];
+          const value = v0 + (v1 - v0) * t;
+
+          resizedCenterData[dstRowBase + x * channels + c] =
+            resizedCenterData instanceof Float32Array
+              ? value
+              : Math.round(value);
+        }
+      }
+    }
+
+    let paddedData: Uint8Array | Uint16Array | Float32Array;
+    if (resizedCenterData instanceof Float32Array) {
+      paddedData = new Float32Array(paddedWidth * srcHeight * channels);
+    } else if (resizedCenterData instanceof Uint16Array) {
+      paddedData = new Uint16Array(paddedWidth * srcHeight * channels);
+    } else {
+      paddedData = new Uint8Array(paddedWidth * srcHeight * channels);
+    }
+
+    const paddedRowStride = paddedWidth * channels;
+    const padStride = P * channels;
+
+    for (let row = 0; row < srcHeight; row++) {
+      const centerRowBase = row * centerRowStride;
+      const paddedRowBase = row * paddedRowStride;
+
+      const centerRow = resizedCenterData.subarray(
+        centerRowBase,
+        centerRowBase + centerRowStride
+      );
+
+      // Left pad from tail of resized center row.
+      const leftPad =
+        P > 0
+          ? resizedCenterData.subarray(
+              centerRowBase + (centerWidth - P) * channels,
+              centerRowBase + centerWidth * channels
+            )
+          : null;
+
+      // Right pad from head of resized center row.
+      const rightPad =
+        P > 0
+          ? resizedCenterData.subarray(
+              centerRowBase,
+              centerRowBase + padStride
+            )
+          : null;
+
+      if (leftPad) paddedData.set(leftPad, paddedRowBase);
+      paddedData.set(centerRow, paddedRowBase + padStride);
+      if (rightPad) paddedData.set(rightPad, paddedRowBase + padStride + centerRowStride);
+    }
+
+    const paddedTexture = new THREE.DataTexture(paddedData, paddedWidth, srcHeight);
+
+    paddedTexture.format = sourceTexture.format;
+    paddedTexture.type = sourceTexture.type;
+    paddedTexture.mapping = sourceTexture.mapping;
+    paddedTexture.colorSpace = sourceTexture.colorSpace;
+    paddedTexture.anisotropy = sourceTexture.anisotropy;
+
+    paddedTexture.wrapS = THREE.ClampToEdgeWrapping;
+    paddedTexture.wrapT = THREE.ClampToEdgeWrapping;
+    paddedTexture.minFilter = THREE.LinearFilter;
+    paddedTexture.magFilter = THREE.LinearFilter;
+
+    paddedTexture.generateMipmaps = false;
+    paddedTexture.flipY = sourceTexture.flipY;
+    paddedTexture.unpackAlignment = sourceTexture.unpackAlignment;
+    paddedTexture.needsUpdate = true;
+
+    const uScale = centerWidth / paddedWidth;
+    const uBias = P / paddedWidth;
+
+    return {
+      texture: paddedTexture,
+      uScale,
+      uBias,
+    };
+  }, [sourceTexture, maxTextureWidth, paddingPx]);
 }
 
-function useGroundProjectionUniforms({
+function useGroundMaterials({
   hdrTexture,
+  envUScale,
+  envUBias,
   actualRadius,
   fadeWidth,
   projectionHeight,
@@ -250,8 +460,16 @@ function useGroundProjectionUniforms({
   rotation,
   groundGain,
   groundContrast,
+  seamOffset,
+  shadowOpacity,
+  usingInvisibleDepthPlane,
+  noiseTexture,
+  displacementScale = 0.35,
+  displacementTiling = 0.06,
 }: {
   hdrTexture: THREE.Texture;
+  envUScale: number;
+  envUBias: number;
   actualRadius: number;
   fadeWidth: number;
   projectionHeight: number;
@@ -260,30 +478,144 @@ function useGroundProjectionUniforms({
   rotation: number;
   groundGain: number;
   groundContrast: number;
-}): GroundProjectionUniforms {
+  seamOffset: number;
+  shadowOpacity: number;
+  usingInvisibleDepthPlane: boolean;
+  noiseTexture?: THREE.Texture;
+  displacementScale?: number;
+  displacementTiling?: number;
+}): GroundMaterials {
   return useMemo(() => {
     hdrTexture.colorSpace = THREE.LinearSRGBColorSpace;
-    hdrTexture.wrapS = THREE.RepeatWrapping;
+    hdrTexture.wrapS = THREE.ClampToEdgeWrapping;
     hdrTexture.wrapT = THREE.ClampToEdgeWrapping;
     hdrTexture.generateMipmaps = false;
     hdrTexture.minFilter = THREE.LinearFilter;
     hdrTexture.magFilter = THREE.LinearFilter;
     hdrTexture.needsUpdate = true;
 
+    if (noiseTexture) {
+      noiseTexture.colorSpace = THREE.NoColorSpace;
+      noiseTexture.wrapS = THREE.RepeatWrapping;
+      noiseTexture.wrapT = THREE.RepeatWrapping;
+      noiseTexture.minFilter = THREE.LinearMipmapLinearFilter;
+      noiseTexture.magFilter = THREE.LinearFilter;
+      noiseTexture.needsUpdate = true;
+    }
+
+    const uRadius = uniform(actualRadius);
+    const uFadeWidth = uniform(fadeWidth);
+    const uProjectionHeight = uniform(projectionHeight);
+    const uProjectionScale = uniform(projectionScale);
+    const uProjectionCurve = uniform(projectionCurve);
+    const uRotation = uniform(-rotation);
+    const uCenter = uniform(new THREE.Vector2(0, 0));
+    const uGroundGain = uniform(groundGain);
+    const uGroundContrast = uniform(groundContrast);
+    const uSeamOffset = uniform(seamOffset);
+    const uEnvUScale = uniform(envUScale);
+    const uEnvUBias = uniform(envUBias);
+
+    const uEnvMap = uniformTexture(hdrTexture);
+
+    const displacedLocalPosition = noiseTexture
+      ? (() => {
+          const uDispMap = uniformTexture(noiseTexture);
+          const uDispScale = uniform(displacementScale);
+          const uDispTiling = uniform(displacementTiling);
+
+          const groundUv = positionLocal.xz.mul(uDispTiling);
+          const disp = texture(uDispMap, groundUv).r.sub(0.5).mul(2.0);
+
+          return positionLocal.add(vec3(0.0, 0.0, disp.mul(uDispScale)));
+        })()
+      : positionLocal;
+
+    const displacedWorldPositionNode = modelWorldMatrix
+      .mul(vec4(displacedLocalPosition, 1.0))
+      .xyz;
+
+    const vWorldPosition = displacedWorldPositionNode.toVarying("vWorldPosition");
+
+    const pUnrotated = vWorldPosition.xz.sub(uCenter).mul(uProjectionScale);
+    const dist = length(pUnrotated);
+
+    const c = cos(uRotation);
+    const s = sin(uRotation);
+
+    const p = vec2(
+      c.mul(pUnrotated.x).sub(s.mul(pUnrotated.y)),
+      s.mul(pUnrotated.x).add(c.mul(pUnrotated.y))
+    );
+
+    const r = clamp(dist.div(uRadius), 0.0, 1.0);
+    const rWarp = pow(r, uProjectionCurve);
+
+    const pLen = length(p).max(1e-5);
+    const warpScale = rWarp.mul(uRadius).mul(uProjectionScale);
+    const warped = p.div(pLen).mul(warpScale);
+
+    const dir = normalize(vec3(warped.x, uProjectionHeight.negate(), warped.y));
+
+    const PI = Math.PI;
+    const envUv = vec2(
+      atan(dir.z, dir.x).div(2.0 * PI).add(0.5),
+      asin(clamp(dir.y, -1.0, 1.0)).div(PI).add(0.5)
+    );
+
+    const envUvPadded = vec2(
+      envUv.x.mul(uEnvUScale).add(uEnvUBias).add(uSeamOffset.mul(uEnvUScale)),
+      envUv.y
+    );
+
+    const projectedColor = texture(uEnvMap, envUvPadded)
+      .rgb
+      .mul(uGroundGain)
+      .sub(0.5)
+      .mul(uGroundContrast)
+      .add(0.5)
+      .clamp(0.0, 1.0);
+
+    const edgeAlpha = float(1.0).sub(
+      smoothstep(uRadius.sub(uFadeWidth), uRadius, dist)
+    );
+
+    const visibleMaterial = new THREE.MeshBasicNodeMaterial({
+      color: 0xffffff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      depthWrite: !usingInvisibleDepthPlane,
+      toneMapped: true,
+    });
+    visibleMaterial.positionNode = displacedLocalPosition;
+    visibleMaterial.colorNode = projectedColor;
+    visibleMaterial.opacityNode = edgeAlpha;
+
+    const shadowMaterial = new THREE.ShadowNodeMaterial({
+      transparent: true,
+      opacity: shadowOpacity,
+      depthWrite: false,
+    });
+    shadowMaterial.positionNode = displacedLocalPosition;
+
+    const depthMaterial = new THREE.MeshBasicNodeMaterial({
+      side: THREE.DoubleSide,
+      transparent: false,
+      colorWrite: false,
+      depthWrite: true,
+      depthTest: true,
+    });
+    depthMaterial.positionNode = displacedLocalPosition;
+
     return {
-      uEnvMap: { value: hdrTexture },
-      uRadius: { value: actualRadius },
-      uFadeWidth: { value: fadeWidth },
-      uProjectionHeight: { value: projectionHeight },
-      uProjectionScale: { value: projectionScale },
-      uProjectionCurve: { value: projectionCurve },
-      uRotation: { value: -rotation },
-      uCenter: { value: new THREE.Vector2(0, 0) },
-      uGroundGain: { value: groundGain },
-      uGroundContrast: { value: groundContrast },
+      visibleMaterial,
+      shadowMaterial,
+      depthMaterial,
     };
   }, [
     hdrTexture,
+    envUScale,
+    envUBias,
     actualRadius,
     fadeWidth,
     projectionHeight,
@@ -292,289 +624,80 @@ function useGroundProjectionUniforms({
     rotation,
     groundGain,
     groundContrast,
+    seamOffset,
+    shadowOpacity,
+    usingInvisibleDepthPlane,
+    noiseTexture,
+    displacementScale,
+    displacementTiling,
   ]);
 }
 
-function useGroundDisplacementUniforms({
-  noiseTexture,
-  displacementScale,
-  displacementTiling,
-}: {
-  noiseTexture: THREE.Texture;
-  displacementScale: number;
-  displacementTiling: number;
-}): GroundDisplacementUniforms {
-  return useMemo(() => {
-    noiseTexture.colorSpace = THREE.NoColorSpace;
-    noiseTexture.wrapS = THREE.RepeatWrapping;
-    noiseTexture.wrapT = THREE.RepeatWrapping;
-    noiseTexture.minFilter = THREE.LinearMipmapLinearFilter;
-    noiseTexture.magFilter = THREE.LinearFilter;
-    noiseTexture.needsUpdate = true;
-
-    return {
-      uDispMap: { value: noiseTexture },
-      uDispScale: { value: displacementScale },
-      uDispTiling: { value: displacementTiling },
-    };
-  }, [noiseTexture, displacementScale, displacementTiling]);
-}
-
-function useVisibleGroundProjectionPatch({
-  materialRef,
-  projectionUniforms,
-  displacementUniforms,
-}: {
-  materialRef: React.RefObject<THREE.MeshBasicMaterial | null>;
-  projectionUniforms: GroundProjectionUniforms;
-  displacementUniforms?: GroundDisplacementUniforms;
-}) {
+function useDisposeMaterials({
+  visibleMaterial,
+  shadowMaterial,
+  depthMaterial,
+}: GroundMaterials) {
   useEffect(() => {
-    const material = materialRef.current;
-    if (!material) return;
-
-    material.onBeforeCompile = (shader) => {
-      patchGroundShader({
-        shader,
-        projectionUniforms,
-        displacementUniforms,
-        includeProjection: true,
-      });
+    return () => {
+      visibleMaterial.dispose();
+      shadowMaterial.dispose();
+      depthMaterial.dispose();
     };
-
-    material.needsUpdate = true;
-  }, [materialRef, projectionUniforms, displacementUniforms]);
+  }, [visibleMaterial, shadowMaterial, depthMaterial]);
 }
 
-function useDisplacementOnlyPatch({
-  materialRef,
-  projectionUniforms,
-  displacementUniforms,
-}: {
-  materialRef: React.RefObject<THREE.Material | null>;
-  projectionUniforms: GroundProjectionUniforms;
-  displacementUniforms: GroundDisplacementUniforms;
-}) {
+function useDisposeTexture(textureToDispose: THREE.Texture) {
   useEffect(() => {
-    const material = materialRef.current;
-    if (!material) return;
-
-    material.onBeforeCompile = (shader) => {
-      patchGroundShader({
-        shader,
-        projectionUniforms,
-        displacementUniforms,
-        includeProjection: false,
-      });
+    return () => {
+      textureToDispose.dispose();
     };
-
-    material.needsUpdate = true;
-  }, [materialRef, projectionUniforms, displacementUniforms]);
-}
-
-function patchGroundShader({
-  shader,
-  projectionUniforms,
-  displacementUniforms,
-  includeProjection,
-}: {
-  shader: Shader;
-  projectionUniforms: GroundProjectionUniforms;
-  displacementUniforms?: GroundDisplacementUniforms;
-  includeProjection: boolean;
-}) {
-  Object.assign(shader.uniforms, projectionUniforms);
-
-  if (displacementUniforms) {
-    Object.assign(shader.uniforms, displacementUniforms);
-    injectDisplacementVertexCode(shader);
-  } else {
-    injectWorldPositionOnlyVertexCode(shader);
-  }
-
-  if (includeProjection) {
-    injectProjectionFragmentCode(shader);
-  }
-}
-
-function injectWorldPositionOnlyVertexCode(shader: Shader) {
-  shader.vertexShader =
-    `
-    varying vec3 vWorldPosition;
-    ` + shader.vertexShader;
-
-  shader.vertexShader = shader.vertexShader.replace(
-    "#include <worldpos_vertex>",
-    `
-    #include <worldpos_vertex>
-    vWorldPosition = worldPosition.xyz;
-    `
-  );
-}
-
-function injectDisplacementVertexCode(shader: Shader) {
-  shader.vertexShader =
-    `
-    uniform sampler2D uDispMap;
-    uniform float uDispScale;
-    uniform float uDispTiling;
-
-    varying vec3 vWorldPosition;
-    ` + shader.vertexShader;
-
-  shader.vertexShader = shader.vertexShader.replace(
-    "#include <begin_vertex>",
-    `
-    #include <begin_vertex>
-
-    vec2 groundUv = position.xz * uDispTiling;
-    float disp = texture2D(uDispMap, groundUv).r;
-    disp = (disp - 0.5) * 2.0;
-
-    transformed.z += disp * uDispScale;
-    `
-  );
-
-  shader.vertexShader = shader.vertexShader.replace(
-    "#include <worldpos_vertex>",
-    `
-    #include <worldpos_vertex>
-    vWorldPosition = worldPosition.xyz;
-    `
-  );
-}
-
-function injectProjectionFragmentCode(shader: Shader) {
-  shader.fragmentShader =
-    `
-    uniform sampler2D uEnvMap;
-    uniform float uRadius;
-    uniform float uFadeWidth;
-    uniform float uProjectionHeight;
-    uniform float uProjectionScale;
-    uniform float uProjectionCurve;
-    uniform float uRotation;
-    uniform vec2 uCenter;
-    uniform float uGroundGain;
-    uniform float uGroundContrast;
-
-    varying vec3 vWorldPosition;
-
-    const float PI = 3.1415926535897932384626433832795;
-
-    vec2 dirToEquirectUv(vec3 dir) {
-      dir = normalize(dir);
-      float u = atan(dir.z, dir.x) / (2.0 * PI) + 0.5;
-      float v = asin(clamp(dir.y, -1.0, 1.0)) / PI + 0.5;
-      return vec2(u, v);
-    }
-    ` + shader.fragmentShader;
-
-  shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <map_fragment>",
-    `
-    vec2 p = (vWorldPosition.xz - uCenter) * uProjectionScale;
-    float dist = length(p);
-
-    float c = cos(uRotation);
-    float s = sin(uRotation);
-    p = mat2(c, -s, s, c) * p;
-
-    float r = clamp(dist / uRadius, 0.0, 1.0);
-    float rWarp = pow(r, uProjectionCurve);
-
-    vec2 warped = vec2(0.0);
-    if (dist > 1e-5) {
-      warped = normalize(p) * rWarp * uRadius * uProjectionScale;
-    }
-
-    vec3 dir = normalize(vec3(warped.x, -uProjectionHeight, warped.y));
-    vec2 envUv = dirToEquirectUv(dir);
-
-    vec3 projectedColor = texture2D(uEnvMap, envUv).rgb;
-
-    projectedColor *= uGroundGain;
-    projectedColor = (projectedColor - 0.5) * uGroundContrast + 0.5;
-    projectedColor = clamp(projectedColor, 0.0, 1.0);
-
-    diffuseColor.rgb = projectedColor;
-
-    float edgeAlpha = 1.0 - smoothstep(
-      uRadius - uFadeWidth,
-      uRadius,
-      dist
-    );
-
-    diffuseColor.a *= edgeAlpha;
-    `
-  );
+  }, [textureToDispose]);
 }
 
 function GroundPlanes({
-  refs,
+  geometry,
   y,
-  shadowOpacity,
   usingInvisibleDepthPlane,
-  planeGeometryArgs,
+  visibleMaterial,
+  shadowMaterial,
+  depthMaterial,
 }: {
-  refs: PlaneMaterialRefs;
+  geometry: THREE.PlaneGeometry;
   y: number;
-  shadowOpacity: number;
   usingInvisibleDepthPlane: boolean;
-  planeGeometryArgs:
-    | [number, number]
-    | [number, number, number, number];
+  visibleMaterial: THREE.Material;
+  shadowMaterial: THREE.Material;
+  depthMaterial: THREE.Material;
 }) {
   return (
     <>
       {usingInvisibleDepthPlane && (
         <mesh
+          geometry={geometry}
           rotation-x={-Math.PI / 2}
           position={[0, y - 0.001, 0]}
           renderOrder={-1}
-        >
-          <planeGeometry args={planeGeometryArgs} />
-          <meshBasicMaterial
-            ref={refs.depthMaterialRef}
-            colorWrite={false}
-            depthWrite
-            depthTest
-            transparent={false}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
+          material={depthMaterial}
+        />
       )}
 
       <mesh
+        geometry={geometry}
         rotation-x={-Math.PI / 2}
         position={[0, y, 0]}
         renderOrder={0}
-      >
-        <planeGeometry args={planeGeometryArgs} />
-        <meshBasicMaterial
-          ref={refs.visibleMaterialRef}
-          color="white"
-          side={THREE.DoubleSide}
-          transparent
-          depthWrite={!usingInvisibleDepthPlane}
-          toneMapped
-        />
-      </mesh>
+        material={visibleMaterial}
+      />
 
       <mesh
+        geometry={geometry}
         rotation-x={-Math.PI / 2}
         position={[0, y + 0.001, 0]}
         receiveShadow
         renderOrder={1}
-      >
-        <planeGeometry args={planeGeometryArgs} />
-        <shadowMaterial
-          ref={refs.shadowMaterialRef}
-          transparent
-          opacity={shadowOpacity}
-          depthWrite={false}
-        />
-      </mesh>
+        material={shadowMaterial}
+      />
     </>
   );
 }

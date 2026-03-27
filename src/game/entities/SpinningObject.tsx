@@ -1,6 +1,6 @@
 import { useFrame } from "@react-three/fiber";
 import { useRef, type ReactNode } from "react";
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 
 type SpinningObjectProps = {
   children: ReactNode;

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { useGameStore } from "../state/useGameStore";
 
 export function Player() {

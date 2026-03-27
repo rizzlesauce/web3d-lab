@@ -1,17 +1,28 @@
 import { FlyControls, OrbitControls, Stats, useProgress } from "@react-three/drei";
 import { Canvas, type Dpr } from "@react-three/fiber";
-import { useMemo, useRef, useState } from "react";
-import * as THREE from "three";
+import type { DefaultGLProps } from "@react-three/fiber/dist/declarations/src/core/renderer";
+import { useCallback, useMemo, useRef, useState } from "react";
+import type { WebGPURendererParameters } from "three/src/renderers/webgpu/WebGPURenderer.js";
+import * as THREE from "three/webgpu";
 import { backgroundRotation, rotatingSceneForBackgroundRotation } from "../game/scenes/SandboxScene";
 import { useGameStore } from "../game/state/useGameStore";
 import { rotateY } from "../game/utility/transforms";
 import { asType } from "../game/utility/types";
 import { useGpuTier } from "../game/utility/useGpuTier";
 
-export function GameCanvas({ children }: { children: React.ReactNode }) {
+type GameCanvasProps = {
+  forceWebGL?: boolean;
+  children: React.ReactNode;
+}
+
+export function GameCanvas({
+  forceWebGL = false,
+  children,
+}: GameCanvasProps) {
   const hdrPath = useGameStore(state => state.hdrPath);
   const sprint = useGameStore(state => state.input.sprint);
   const initialFramesRendered = useGameStore(state => state.initialFramesRendered);
+  const setInitialFramesRendered = useGameStore(state => state.setInitialFramesRendered);
   const paused = useGameStore(state => state.paused);
   const togglePaused = useGameStore(state => state.togglePaused);
   const gpuTier = useGpuTier();
@@ -23,11 +34,11 @@ export function GameCanvas({ children }: { children: React.ReactNode }) {
   const elementRef = useRef<HTMLDivElement>(null!);
 
   const dpr: Dpr = useMemo(() => {
-    if (false && gpuTier.tier >= 3) {
+    if (asType<boolean>(false) && gpuTier.tier >= 3) {
       return window.devicePixelRatio;
     }
 
-    if (true && gpuTier.tier >= 2) {
+    if (asType<boolean>(true) && gpuTier.tier >= 2) {
       return [1, 2];
     }
 
@@ -41,6 +52,39 @@ export function GameCanvas({ children }: { children: React.ReactNode }) {
     }
     return position;
   }, [])
+
+  const powerPreference: GPUPowerPreference = "high-performance";
+  const samples = gpuTier.tier >= 3 ? 4 : 2
+  const alpha = asType<boolean>(true)
+
+  const createRenderer = useCallback(async (props: DefaultGLProps) => {
+    let forcingWebGL = forceWebGL;
+
+    while (true) {
+      try {
+        console.log("Creating WebGPU renderer with props:", props, 'overrides:', { samples, alpha, forceWebGL, powerPreference });
+
+        const renderer = new THREE.WebGPURenderer({
+          ...props as WebGPURendererParameters,
+          antialias: samples > 1,
+          samples,
+          powerPreference: "high-performance",
+          alpha,
+          forceWebGL: forcingWebGL,
+        })
+        await renderer.init();
+        setInitialFramesRendered(false);
+        return renderer;
+      } catch (err: any) {
+        if (forcingWebGL) {
+          throw err;
+        }
+
+        console.error(`Falling back to WebGL renderer due to error: ${err.message}`);
+        forcingWebGL = true;
+      }
+    }
+  }, [forceWebGL, samples, alpha, powerPreference])
 
   const toggleFullscreen = async () => {
     if (!document.fullscreenElement) {
@@ -132,15 +176,7 @@ export function GameCanvas({ children }: { children: React.ReactNode }) {
           visibility: loadingProgress < 100 || !initialFramesRendered ? "hidden" : "visible",
         }}
         flat
-        gl={{
-          /* AA is done in postprocessing */
-          //antialias: true,
-          powerPreference: "high-performance",
-          alpha: !hdrPath,
-          toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: 0.9,
-          outputColorSpace: THREE.SRGBColorSpace,
-        }}
+        gl={createRenderer}
         camera={{
           fov: 65,
           near: 0.09,

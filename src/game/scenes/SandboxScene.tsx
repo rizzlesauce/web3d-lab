@@ -1,9 +1,9 @@
-import { ContactShadows, Environment, GizmoHelper, GizmoViewport, Grid, useProgress } from "@react-three/drei";
+import { ContactShadows, GizmoHelper, GizmoViewport, Grid, useProgress } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Bloom, BrightnessContrast, DepthOfField, EffectComposer, HueSaturation, N8AO, SMAA, ToneMapping, Vignette } from "@react-three/postprocessing";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { AtmospherePollenCylinder } from "../entities/AtmospherePollenCylinder";
 import { Gloria } from "../entities/Gloria";
 import { Ground } from "../entities/Ground";
@@ -15,6 +15,8 @@ import { SpinningObject } from "../entities/SpinningObject";
 import { StablePmremCubeCamera } from "../entities/StablePmremCubeCamera";
 import { Truck } from "../entities/Truck";
 import { WarriorGirl } from "../entities/WarriorGirl";
+import { WebGPUEnvironment as Environment } from "../entities/WebGPUEnvironmentGround";
+import { WebGPUPostFX } from "../../render/WebGPUPostFX";
 import { Woman } from "../entities/Woman";
 import { useGameStore } from "../state/useGameStore";
 import { rotateY } from "../utility/transforms";
@@ -49,10 +51,10 @@ const hdrs = [
 ];
 
 const backgroundIntensity = 0.5;
-export const backgroundRotation = true ? 2 * Math.PI * -0.22 : 0;
-export const rotatingSceneForBackgroundRotation = true && backgroundRotation !== 0;
+export const backgroundRotation = asType<boolean>(true) ? 2 * Math.PI * -0.22 : 0;
+export const rotatingSceneForBackgroundRotation = asType<boolean>(true) && backgroundRotation !== 0;
 // There is a bug with Environment backgroundRotation when ground projection is enabled
-const usingEnvironmentGroundProjection = !backgroundRotation || rotatingSceneForBackgroundRotation;
+const usingEnvironmentGroundProjection = asType<boolean>(true) && (!backgroundRotation || rotatingSceneForBackgroundRotation);
 const allowingHigherTier1Quality = true;
 
 export function SandboxScene() {
@@ -88,20 +90,28 @@ export function SandboxScene() {
     [sceneRotatedSunPosition],
   );
 
+  const aoExcludeLayer = 10;
+  const particlesLayer = 11;
   const cubeCameraLayer = 30;
   const cubeCameraLayer2 = 31;
   const cubeCameraMaterialRef = useRef<THREE.MeshPhysicalMaterial>(null);
   const cubeCameraMaterialRef2 = useRef<THREE.MeshPhysicalMaterial>(null);
 
   const camera = useThree((s) => s.camera)
+  const gl = useThree((s) => s.gl);
+
+  const isWebGpu = (gl as unknown as THREE.WebGPURenderer).isWebGPURenderer || false;
 
   useEffect(() => {
     camera.layers.enable(cubeCameraLayer)
     camera.layers.enable(cubeCameraLayer2)
+    camera.layers.enable(aoExcludeLayer)
+    camera.layers.enable(particlesLayer)
   }, [camera])
 
   useEffect(() => {
     if (gpuTier.tier < 0) {
+      setHdrPath(undefined);
       return;
     }
 
@@ -140,6 +150,10 @@ export function SandboxScene() {
     }
   }, [loadingProgress, gpuTier]);
 
+  useEffect(() => {
+    gl.setClearColor(0x000000, hdrPath ? 1 : 0);
+  }, [gl, hdrPath]);
+
   const shadowMapSize = useMemo(() => {
     if (gpuTier.tier >= 3) {
       return 2048;
@@ -151,14 +165,14 @@ export function SandboxScene() {
     return 512;
   }, [gpuTier]);
 
-  useFrame((state, _delta) => {
+  useFrame(({ gl, camera }, _delta) => {
     if (frameRef.current === 0) {
       const gpuTier = gpuTierRef.current;
 
-      if (true && gpuTier.tier >= 1) {
-        state.gl.shadowMap.type = THREE.PCFShadowMap;
-      } else if (true) {
-        state.gl.shadowMap.type = THREE.BasicShadowMap;
+      if (asType<boolean>(true) && gpuTier.tier >= 1) {
+        gl.shadowMap.type = THREE.PCFShadowMap;
+      } else if (asType<boolean>(true)) {
+        gl.shadowMap.type = THREE.BasicShadowMap;
       }
     }
 
@@ -166,11 +180,11 @@ export function SandboxScene() {
       setInitialFramesRendered(true);
     }
 
-    if (false) {
+    if (asType<boolean>(false)) {
       if (rotatingSceneForBackgroundRotation) {
-        console.log(rotateY(state.camera.position, backgroundRotation));
+        console.log(rotateY(camera.position, backgroundRotation));
       } else {
-        console.log(state.camera.position);
+        console.log(camera.position);
       }
     }
 
@@ -181,7 +195,7 @@ export function SandboxScene() {
     <>
       {/* Lighting */}
 
-      {true && !!hdrPath && (
+      {asType<boolean>(true) && !!hdrPath && (
         <Environment
           files={hdrPath}
           //preset="forest"
@@ -191,11 +205,16 @@ export function SandboxScene() {
           backgroundRotation={rotatingSceneForBackgroundRotation ? undefined : [0, backgroundRotation, 0]}
           environmentIntensity={0.5}
           environmentRotation={rotatingSceneForBackgroundRotation ? undefined : [0, backgroundRotation, 0]}
-          ground={usingEnvironmentGroundProjection ? {
-            height: 4,
-            radius: 30,
-            scale: 70,
-          } : undefined}
+          {...asType<boolean>(true) && usingEnvironmentGroundProjection
+            ? {
+              ground: {
+                height: 4,
+                radius: 30,
+                scale: 70,
+              }
+            }
+            : {}
+          }
         />
       )}
 
@@ -242,9 +261,9 @@ export function SandboxScene() {
           />
         )}
 
-        {(false || !hdrPath) && <Ground />}
+        {(asType<boolean>(false) || !hdrPath) && <Ground />}
 
-        {false && (
+        {asType<boolean>(false) && (
           <mesh
             rotation-x={-Math.PI / 2}
             receiveShadow
@@ -258,7 +277,7 @@ export function SandboxScene() {
           </mesh>
         )}
 
-        {true && !!hdrPath && (
+        {asType<boolean>(true) && !!hdrPath && (
           <HdriGroundPlane
             hdrPath={hdrPath}
             noisePath="/textures/ground_noise.png"
@@ -454,7 +473,7 @@ export function SandboxScene() {
               excludeLayer={cubeCameraLayer}
               //renderPriority={2}
               materialRefs={[cubeCameraMaterialRef]}
-              disabled={gpuTier.tier < 0}
+              disabled={asType<boolean>(true) || gpuTier.tier < 0}
             >
               <mesh
                 castShadow
@@ -481,7 +500,7 @@ export function SandboxScene() {
 
         {false && <Player />}
 
-        {true && (
+        {asType<boolean>(true) && (
           <StablePmremCubeCamera
             position={[1, 1.12, -1]}
             resolution={cubeCameraResolution}
@@ -503,7 +522,7 @@ export function SandboxScene() {
             excludeLayer={cubeCameraLayer2}
             //renderPriority={12}
             materialRefs={[cubeCameraMaterialRef2]}
-            disabled={true || gpuTier.tier < 3}
+            disabled={asType<boolean>(true) || gpuTier.tier < 3}
           >
             <SpinningObject
               radPerSec={[0, -0.02, 0]}
@@ -526,7 +545,7 @@ export function SandboxScene() {
         )}
       </group>
 
-      {true && gpuTier.tier >= 0 && (
+      {asType<boolean>(true) && gpuTier.tier >= 0 && (
         <AtmospherePollenCylinder
           count={30}
           texturePath="/textures/particle_sprite_soft_warm.png"
@@ -542,11 +561,12 @@ export function SandboxScene() {
           sunlightDirection={sceneRotatedSunlightDirection}
           sunGlowStrength={1.4}
           spawnFadeInTime={0.7}
+          layer={particlesLayer}
         />
       )}
 
       {/* doesn't work well with uneven ground */}
-      {false && gpuTier.tier >= 1 && (
+      {asType<boolean>(false) && gpuTier.tier >= 1 && (
         <ContactShadows
           position={[0, 0.001, 0]}
           opacity={0.4}
@@ -558,19 +578,37 @@ export function SandboxScene() {
         />
       )}
 
-      {false && (
+      {asType<boolean>(false) && (
         /* Changes scene tone mapping */
         <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
           <GizmoViewport />
         </GizmoHelper>
       )}
 
-      {true && gpuTier.tier >= 1 && (
+      {asType<boolean>(true) && isWebGpu && gpuTier.tier >= 1 && (
+        <WebGPUPostFX
+          gpuTier={gpuTier}
+          allowingHigherTier1Quality={allowingHigherTier1Quality}
+          enableAO={true}
+          enableSSR={true}
+          enableBloom={true}
+          enableContrast={true}
+          enableVignette={true}
+          enableDOF={true}
+          aoExcludeLayer={aoExcludeLayer}
+          particlesLayer={particlesLayer}
+          enableFxaa={false}
+          enableSmaa={true}
+          resolutionScale={1}
+        />
+      )}
+
+      {asType<boolean>(true) && !isWebGpu && gpuTier.tier >= 1 && (
         <EffectComposer
           multisampling={0}
         >
           <>
-            {true && (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
+            {true && !isWebGpu && (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
               <N8AO
                 intensity={2}
                 halfRes={asType<boolean>(false) || gpuTier.tier < 3}
@@ -582,7 +620,7 @@ export function SandboxScene() {
               />
             )}
 
-            {true && (gpuTier.tier >= 2 || (true && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
+            {true && !isWebGpu && (gpuTier.tier >= 2 || (true && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
               <Bloom
                 intensity={0.22}
                 luminanceThreshold={1.05}
@@ -590,28 +628,28 @@ export function SandboxScene() {
               />
             )}
 
-            {true && gpuTier.tier >= 1 && (
+            {true && !isWebGpu && gpuTier.tier >= 1 && (
               <BrightnessContrast
                 brightness={0}
                 contrast={0.09}
               />
             )}
 
-            {false && (
+            {false && !isWebGpu && (
               <HueSaturation
                 hue={0}
                 saturation={0.01}
               />
             )}
 
-            {true && gpuTier.tier >= 1 && (
+            {true && !isWebGpu && gpuTier.tier >= 1 && (
               <Vignette
                 offset={0.18}
                 darkness={0.28}
               />
             )}
 
-            {true && (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
+            {true && !isWebGpu && (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
               <DepthOfField
                 focusDistance={0.02}
                 focalLength={0.01}
@@ -619,11 +657,11 @@ export function SandboxScene() {
               />
             )}
 
-            {true && (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
+            {true && !isWebGpu && (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
               <SMAA />
             )}
 
-            {true && gpuTier.tier >= 1 && (
+            {true && !isWebGpu && gpuTier.tier >= 1 && (
               <ToneMapping />
             )}
           </>

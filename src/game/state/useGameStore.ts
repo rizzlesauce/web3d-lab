@@ -1,4 +1,4 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { create } from "zustand";
 import { createInput, type InputState } from "../systems/input";
 

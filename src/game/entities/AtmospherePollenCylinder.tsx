@@ -1,6 +1,7 @@
 import { useFrame, useLoader, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
-import * as THREE from "three";
+import { attribute, depth, depthPass, float, screenUV, smoothstep, texture, uniform, uv } from "three/tsl";
+import * as THREE from "three/webgpu";
 
 type AtmospherePollenProps = {
   count?: number;
@@ -16,14 +17,12 @@ type AtmospherePollenProps = {
   fadeY?: number;
 
   baseWind?: [number, number, number];
-
-  // Direction the sunlight travels toward the scene.
-  // For a directionalLight at [8, 12, 6] aimed toward origin:
-  // use approximately [-8, -12, -6].
   sunlightDirection?: THREE.Vector3;
   sunGlowStrength?: number;
-
   spawnFadeInTime?: number;
+
+  layer?: number;
+  visibleDepthTest?: boolean;
 };
 
 const timer = new THREE.Timer();
@@ -42,17 +41,21 @@ export function AtmospherePollenCylinder({
   fadeY = 0.2,
 
   baseWind = [0.035, -0.06, 0.01],
-
   sunlightDirection = new THREE.Vector3(-8, -12, -6),
   sunGlowStrength = 1.2,
-
   spawnFadeInTime = 1.0,
+  layer = 11,
+  visibleDepthTest = true,
 }: AtmospherePollenProps) {
-  const { camera } = useThree();
-  const pointsRef = useRef<THREE.Points>(null!);
+  const { camera, size: viewportSize, scene } = useThree();
+
+  const meshRef = useRef<THREE.InstancedMesh | null>(null);
+  const opacityUniformRef = useRef<THREE.UniformNode<'float', number> | null>(null);
 
   const sprite = useLoader(THREE.TextureLoader, texturePath);
 
+  // Do not dispose this texture manually.
+  // useLoader caches/shared resources; disposing can race with in-flight WebGPU submits.
   useEffect(() => {
     sprite.colorSpace = THREE.SRGBColorSpace;
     sprite.wrapS = THREE.ClampToEdgeWrapping;
@@ -60,15 +63,109 @@ export function AtmospherePollenCylinder({
     sprite.needsUpdate = true;
   }, [sprite]);
 
+  const baseColor = useMemo(() => new THREE.Color(color), [color]);
   const sunlightDir = useMemo(
     () => sunlightDirection.clone().normalize(),
     [sunlightDirection]
   );
 
-  const data = useMemo(() => {
-    const positions = new Float32Array(count * 3);
-    const alphas = new Float32Array(count);
-    const brightness = new Float32Array(count);
+  const quadGeometry = useMemo(() => {
+    const g = new THREE.PlaneGeometry(2, 2, 1, 1);
+
+    const instanceAlpha = new Float32Array(count);
+    const instanceColor = new Float32Array(count * 3);
+
+    const alphaAttr = new THREE.InstancedBufferAttribute(instanceAlpha, 1);
+    alphaAttr.setUsage(THREE.DynamicDrawUsage);
+
+    const colorAttr = new THREE.InstancedBufferAttribute(instanceColor, 3);
+    colorAttr.setUsage(THREE.DynamicDrawUsage);
+
+    g.setAttribute("instanceAlpha", alphaAttr);
+    g.setAttribute("instanceColor", colorAttr);
+
+    return {
+      geometry: g,
+      instanceAlpha,
+      instanceColor,
+      alphaAttr,
+      colorAttr,
+    };
+  }, [count]);
+
+  useEffect(() => {
+    return () => {
+      quadGeometry.geometry.dispose();
+    };
+  }, [quadGeometry]);
+
+  const material = useMemo(() => {
+    const mat = new THREE.MeshBasicNodeMaterial();
+    mat.transparent = true;
+    mat.depthWrite = false;
+    mat.depthTest = !visibleDepthTest;
+    mat.blending = THREE.AdditiveBlending;
+    mat.alphaTest = 0.01;
+    mat.fog = true;
+
+    const tex = texture(sprite, uv());
+    const instanceAlpha = attribute<"float">("instanceAlpha");
+    const instanceColor = attribute<"vec3">("instanceColor");
+    const opacityUniform = uniform(opacity, "float");
+
+    opacityUniformRef.current = opacityUniform;
+
+    mat.colorNode = tex.rgb.mul(instanceColor);
+
+    const baseOpacity = tex.a.mul(instanceAlpha).mul(opacityUniform)
+
+    if (visibleDepthTest) {
+      const opaqueDepthPass = depthPass(scene, camera)
+      const depthLayers = new THREE.Layers()
+      depthLayers.mask = camera.layers.mask
+      depthLayers.disable(layer)
+      opaqueDepthPass.setLayers(depthLayers)
+
+      const opaqueDepthTex = opaqueDepthPass.getTextureNode('depth')
+
+      // Depth of already-rendered opaque/postprocessed scene
+      const opaqueDepth = opaqueDepthTex.sample(screenUV).r
+
+      // Current particle fragment depth
+      const particleDepth = depth
+
+      const depthBias = float(0.0015)
+      const depthFeather = float(0.003)
+
+      // Visible if particle is in front of the opaque scene depth
+      const visibleMask = smoothstep(
+        particleDepth.sub(depthBias),
+        particleDepth.add(depthFeather),
+        opaqueDepth
+      )
+
+      mat.opacityNode = baseOpacity.mul(visibleMask)
+    } else {
+      mat.opacityNode = baseOpacity
+    }
+
+    return mat
+  }, [sprite, scene, camera, layer]);
+
+  useEffect(() => {
+    return () => {
+      material.dispose();
+    };
+  }, [material]);
+
+  useEffect(() => {
+    if (opacityUniformRef.current) {
+      opacityUniformRef.current.value = opacity;
+    }
+  }, [opacity]);
+
+  const particleState = useMemo(() => {
+    const centers = new Float32Array(count * 3);
     const velocities = new Float32Array(count * 3);
     const ages = new Float32Array(count);
     const spawnAges = new Float32Array(count);
@@ -76,20 +173,12 @@ export function AtmospherePollenCylinder({
     const seeds = new Float32Array(count);
     const swayAmp = new Float32Array(count);
     const swayFreq = new Float32Array(count);
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute("aAlpha", new THREE.BufferAttribute(alphas, 1));
-    geometry.setAttribute(
-      "aBrightness",
-      new THREE.BufferAttribute(brightness, 1)
-    );
+    const scales = new Float32Array(count);
+    const alphas = new Float32Array(count);
+    const brightness = new Float32Array(count);
 
     return {
-      geometry,
-      positions,
-      alphas,
-      brightness,
+      centers,
       velocities,
       ages,
       spawnAges,
@@ -97,61 +186,60 @@ export function AtmospherePollenCylinder({
       seeds,
       swayAmp,
       swayFreq,
+      scales,
+      alphas,
+      brightness,
     };
   }, [count]);
-
-  useEffect(() => {
-    return () => {
-      data.geometry.dispose();
-    };
-  }, [data.geometry]);
 
   const tempNdc = useMemo(() => new THREE.Vector3(), []);
   const tempToCamera = useMemo(() => new THREE.Vector3(), []);
   const tempCenter = useMemo(() => new THREE.Vector3(), []);
+  const worldPos = useMemo(() => new THREE.Vector3(), []);
+  const mvPos = useMemo(() => new THREE.Vector3(), []);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
 
   function randomPointInCylinder(centerX: number, centerZ: number) {
     const angle = Math.random() * Math.PI * 2;
     const r = Math.sqrt(Math.random()) * radius;
-    const x = centerX + Math.cos(angle) * r;
-    const z = centerZ + Math.sin(angle) * r;
-    const y = THREE.MathUtils.randFloat(minY, maxY);
-    return { x, y, z };
+
+    return {
+      x: centerX + Math.cos(angle) * r,
+      y: THREE.MathUtils.randFloat(minY, maxY),
+      z: centerZ + Math.sin(angle) * r,
+    };
   }
 
   function spawnParticle(i: number, midLife = true) {
     const centerX = camera.position.x;
     const centerZ = camera.position.z;
-
     const p = randomPointInCylinder(centerX, centerZ);
     const i3 = i * 3;
 
-    data.positions[i3 + 0] = p.x;
-    data.positions[i3 + 1] = p.y;
-    data.positions[i3 + 2] = p.z;
+    particleState.centers[i3 + 0] = p.x;
+    particleState.centers[i3 + 1] = p.y;
+    particleState.centers[i3 + 2] = p.z;
 
-    data.velocities[i3 + 0] =
+    particleState.velocities[i3 + 0] =
       baseWind[0] + THREE.MathUtils.randFloat(-0.02, 0.02);
-    data.velocities[i3 + 1] =
+    particleState.velocities[i3 + 1] =
       baseWind[1] + THREE.MathUtils.randFloat(-0.03, 0.01);
-    data.velocities[i3 + 2] =
+    particleState.velocities[i3 + 2] =
       baseWind[2] + THREE.MathUtils.randFloat(-0.02, 0.02);
 
-    data.lifetimes[i] = THREE.MathUtils.randFloat(6, 12);
+    particleState.lifetimes[i] = THREE.MathUtils.randFloat(6, 12);
+    particleState.ages[i] = midLife
+      ? THREE.MathUtils.randFloat(0, particleState.lifetimes[i] * 0.7)
+      : 0;
 
-    if (midLife) {
-      data.ages[i] = THREE.MathUtils.randFloat(0, data.lifetimes[i] * 0.7);
-    } else {
-      data.ages[i] = 0;
-    }
+    particleState.spawnAges[i] = 0;
+    particleState.seeds[i] = Math.random() * 1000;
+    particleState.swayAmp[i] = THREE.MathUtils.randFloat(0.02, 0.07);
+    particleState.swayFreq[i] = THREE.MathUtils.randFloat(0.35, 0.9);
 
-    data.spawnAges[i] = 0;
-    data.seeds[i] = Math.random() * 1000;
-    data.swayAmp[i] = THREE.MathUtils.randFloat(0.02, 0.07);
-    data.swayFreq[i] = THREE.MathUtils.randFloat(0.35, 0.9);
-
-    data.alphas[i] = 0;
-    data.brightness[i] = 1;
+    particleState.alphas[i] = 0;
+    particleState.brightness[i] = 1;
+    particleState.scales[i] = 0.01;
   }
 
   useEffect(() => {
@@ -159,56 +247,57 @@ export function AtmospherePollenCylinder({
       spawnParticle(i, true);
     }
 
-    (data.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
-    (data.geometry.getAttribute("aAlpha") as THREE.BufferAttribute).needsUpdate = true;
-    (data.geometry.getAttribute("aBrightness") as THREE.BufferAttribute).needsUpdate = true;
-  }, [count]);
+    quadGeometry.alphaAttr.needsUpdate = true;
+    quadGeometry.colorAttr.needsUpdate = true;
+  }, [count]); // intentional
 
   useFrame((_state, delta) => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+
     const dt = Math.min(delta, 1 / 10);
 
     timer.update(delta);
     const t = timer.getElapsed();
-
-    const positions = data.positions;
-    const velocities = data.velocities;
-    const alphas = data.alphas;
-    const brightness = data.brightness;
 
     tempCenter.set(camera.position.x, 0, camera.position.z);
 
     for (let i = 0; i < count; i++) {
       const i3 = i * 3;
 
-      data.ages[i] += dt;
-      data.spawnAges[i] += dt;
+      particleState.ages[i] += dt;
+      particleState.spawnAges[i] += dt;
 
-      // world-space drift
-      positions[i3 + 0] += velocities[i3 + 0] * dt;
-      positions[i3 + 1] += velocities[i3 + 1] * dt;
-      positions[i3 + 2] += velocities[i3 + 2] * dt;
+      particleState.centers[i3 + 0] += particleState.velocities[i3 + 0] * dt;
+      particleState.centers[i3 + 1] += particleState.velocities[i3 + 1] * dt;
+      particleState.centers[i3 + 2] += particleState.velocities[i3 + 2] * dt;
 
-      // subtle flutter in world space
-      positions[i3 + 0] +=
-        Math.sin(t * data.swayFreq[i] + data.seeds[i]) *
-        data.swayAmp[i] *
+      particleState.centers[i3 + 0] +=
+        Math.sin(t * particleState.swayFreq[i] + particleState.seeds[i]) *
+        particleState.swayAmp[i] *
         dt;
 
-      positions[i3 + 2] +=
-        Math.cos(t * (data.swayFreq[i] * 0.8) + data.seeds[i] * 1.37) *
-        data.swayAmp[i] *
+      particleState.centers[i3 + 2] +=
+        Math.cos(
+          t * (particleState.swayFreq[i] * 0.8) +
+            particleState.seeds[i] * 1.37
+        ) *
+        particleState.swayAmp[i] *
         dt;
 
-      positions[i3 + 1] +=
-        Math.sin(t * (data.swayFreq[i] * 0.55) + data.seeds[i] * 0.73) *
-        data.swayAmp[i] *
+      particleState.centers[i3 + 1] +=
+        Math.sin(
+          t * (particleState.swayFreq[i] * 0.55) +
+            particleState.seeds[i] * 0.73
+        ) *
+        particleState.swayAmp[i] *
         0.15 *
         dt;
 
-      const lifeT = data.ages[i] / data.lifetimes[i];
+      const lifeT = particleState.ages[i] / particleState.lifetimes[i];
 
       const fadeIn = THREE.MathUtils.clamp(
-        data.spawnAges[i] / spawnFadeInTime,
+        particleState.spawnAges[i] / spawnFadeInTime,
         0,
         1
       );
@@ -218,48 +307,54 @@ export function AtmospherePollenCylinder({
         fadeOut = 1 - (lifeT - 0.72) / 0.28;
       }
       fadeOut = THREE.MathUtils.clamp(fadeOut, 0, 1);
+
       let alpha = fadeIn * fadeOut;
+
+      const y = particleState.centers[i3 + 1];
       const groundYFadeStart = groundY + fadeY;
-      if (positions[i3 + 1] < groundYFadeStart) {
-        // interpolate alpha based on height above ground
-        const a = THREE.MathUtils.clamp((positions[i3 + 1] - groundY) / (groundYFadeStart - groundY), 0, 1);
+
+      if (y < groundYFadeStart) {
+        const a = THREE.MathUtils.clamp(
+          (y - groundY) / (groundYFadeStart - groundY),
+          0,
+          1
+        );
         alpha = Math.min(alpha, a);
       }
 
-      alphas[i] = alpha;
+      particleState.alphas[i] = alpha;
 
-      // brighter when backlit by the sun relative to the camera
       tempToCamera
         .set(
-          camera.position.x - positions[i3 + 0],
-          camera.position.y - positions[i3 + 1],
-          camera.position.z - positions[i3 + 2]
+          camera.position.x - particleState.centers[i3 + 0],
+          camera.position.y - particleState.centers[i3 + 1],
+          camera.position.z - particleState.centers[i3 + 2]
         )
         .normalize();
 
       const align = Math.max(0, tempToCamera.dot(sunlightDir));
       const glow = Math.pow(align, 3.0);
-      brightness[i] = 1.0 + glow * sunGlowStrength;
+      const bright = 1.0 + glow * sunGlowStrength;
+      particleState.brightness[i] = bright;
 
-      // recycle rules:
-      // - expired
-      // - below ground
-      // - too far from camera-centered cylinder
-      // - very far offscreen / behind camera
-      const dx = positions[i3 + 0] - tempCenter.x;
-      const dz = positions[i3 + 2] - tempCenter.z;
-      const distXZ = Math.sqrt(dx * dx + dz * dz);
+      worldPos.set(
+        particleState.centers[i3 + 0],
+        particleState.centers[i3 + 1],
+        particleState.centers[i3 + 2]
+      );
 
-      tempNdc
-        .set(positions[i3 + 0], positions[i3 + 1], positions[i3 + 2])
-        .project(camera);
+      tempNdc.copy(worldPos).project(camera);
 
-      const expired = data.ages[i] >= data.lifetimes[i];
-      const belowGround = positions[i3 + 1] < groundY;
+      const dx = particleState.centers[i3 + 0] - tempCenter.x;
+      const dz = particleState.centers[i3 + 2] - tempCenter.z;
+      const distXZ = Math.hypot(dx, dz);
+
+      const expired = particleState.ages[i] >= particleState.lifetimes[i];
+      const belowGround = particleState.centers[i3 + 1] < groundY;
       const outsideCylinder =
         distXZ > radius * 1.25 ||
-        positions[i3 + 1] < minY - 1.0 ||
-        positions[i3 + 1] > maxY + 1.0;
+        particleState.centers[i3 + 1] < minY - 1.0 ||
+        particleState.centers[i3 + 1] > maxY + 1.0;
 
       const wayOffscreen =
         tempNdc.z < -1.5 ||
@@ -271,75 +366,69 @@ export function AtmospherePollenCylinder({
 
       if (expired || belowGround || outsideCylinder || wayOffscreen) {
         spawnParticle(i, true);
+
+        worldPos.set(
+          particleState.centers[i3 + 0],
+          particleState.centers[i3 + 1],
+          particleState.centers[i3 + 2]
+        );
       }
+
+      mvPos.copy(worldPos).applyMatrix4(camera.matrixWorldInverse);
+      const depth = Math.max(0.0001, -mvPos.z);
+
+      // Exact replacement for:
+      // gl_PointSize = max(2.0, uSize * (180.0 / -mvPosition.z));
+      const pointSizePx = Math.max(2.0, size * (180.0 / depth));
+
+      let halfWorldSize = 0.01;
+
+      if ((camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
+        const perspectiveCamera = camera as THREE.PerspectiveCamera;
+        const fovRad = THREE.MathUtils.degToRad(perspectiveCamera.fov);
+        const worldHeightAtDepth = 2 * depth * Math.tan(fovRad * 0.5);
+        const worldPerPixel = worldHeightAtDepth / viewportSize.height;
+        halfWorldSize = pointSizePx * 0.5 * worldPerPixel;
+      } else if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
+        const orthoCamera = camera as THREE.OrthographicCamera;
+        const worldHeight =
+          (orthoCamera.top - orthoCamera.bottom) / orthoCamera.zoom;
+        const worldPerPixel = worldHeight / viewportSize.height;
+        halfWorldSize = pointSizePx * 0.5 * worldPerPixel;
+      }
+
+      particleState.scales[i] = halfWorldSize;
+
+      dummy.position.copy(worldPos);
+      dummy.quaternion.copy(camera.quaternion);
+      dummy.scale.set(halfWorldSize, halfWorldSize, 1);
+      dummy.updateMatrix();
+
+      mesh.setMatrixAt(i, dummy.matrix);
+
+      quadGeometry.instanceAlpha[i] = particleState.alphas[i];
+      quadGeometry.instanceColor[i3 + 0] = baseColor.r * bright;
+      quadGeometry.instanceColor[i3 + 1] = baseColor.g * bright;
+      quadGeometry.instanceColor[i3 + 2] = baseColor.b * bright;
     }
 
-    (data.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
-    (data.geometry.getAttribute("aAlpha") as THREE.BufferAttribute).needsUpdate = true;
-    (data.geometry.getAttribute("aBrightness") as THREE.BufferAttribute).needsUpdate = true;
+    mesh.instanceMatrix.needsUpdate = true;
+    quadGeometry.alphaAttr.needsUpdate = true;
+    quadGeometry.colorAttr.needsUpdate = true;
   });
 
   return (
-    <points
-      ref={pointsRef}
-      geometry={data.geometry}
+    <instancedMesh
+      ref={meshRef}
+      args={[quadGeometry.geometry, material, count]}
       frustumCulled={false}
       renderOrder={10}
-    >
-      <shaderMaterial
-        transparent
-        depthWrite={false}
-        depthTest
-        blending={THREE.AdditiveBlending}
-        uniforms={{
-          uMap: { value: sprite },
-          uColor: { value: new THREE.Color(color) },
-          uSize: { value: size },
-          uOpacity: { value: opacity },
-        }}
-        vertexShader={particleVertexShader}
-        fragmentShader={particleFragmentShader}
-      />
-    </points>
+      /*
+      userData={{
+        cannotReceiveAO: true,
+      }}
+      */
+      layers={layer}
+    />
   );
 }
-
-const particleVertexShader = `
-  attribute float aAlpha;
-  attribute float aBrightness;
-
-  varying float vAlpha;
-  varying float vBrightness;
-
-  uniform float uSize;
-
-  void main() {
-    vAlpha = aAlpha;
-    vBrightness = aBrightness;
-
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    gl_Position = projectionMatrix * mvPosition;
-
-    gl_PointSize = max(2.0, uSize * (180.0 / -mvPosition.z));
-  }
-`;
-
-const particleFragmentShader = `
-  uniform sampler2D uMap;
-  uniform vec3 uColor;
-  uniform float uOpacity;
-
-  varying float vAlpha;
-  varying float vBrightness;
-
-  void main() {
-    vec4 tex = texture2D(uMap, gl_PointCoord);
-
-    float alpha = tex.a * vAlpha * uOpacity;
-    if (alpha < 0.01) discard;
-
-    vec3 color = tex.rgb * uColor * vBrightness;
-
-    gl_FragColor = vec4(color, alpha);
-  }
-`;

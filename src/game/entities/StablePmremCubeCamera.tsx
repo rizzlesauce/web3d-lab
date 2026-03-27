@@ -1,7 +1,7 @@
 import { useFrame, useThree, type ThreeElements } from '@react-three/fiber'
 import * as React from 'react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import * as THREE from 'three'
+import * as THREE from 'three/webgpu'
 
 type SupportedEnvMaterial = THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial
 
@@ -65,19 +65,27 @@ type StablePmremCubeCameraProps = Omit<ThreeElements['group'], 'children'> &
     frameInterval?: number
 
     /**
-     * Delay adoption of the freshly generated PMREM by this many frames.
-     * Based on your observations, 1 is the key setting.
+     * Delay adoption of the freshly captured cubemap by this many frames.
+     * Keeping this lets you preserve the same “stable adoption” behavior
+     * you had with the manual PMREM path.
      */
     adoptDelayFrames?: number
 
     /**
      * If provided, this is applied to the materials immediately on mount,
-     * before the first generated PMREM is ready.
+     * before the first generated cubemap is ready.
      */
     initialEnvMap?: THREE.Texture | null
 
     disabled?: boolean
   }
+
+type RendererLike = {
+  autoClear: boolean
+  shadowMap?: {
+    autoUpdate: boolean
+  }
+}
 
 function setLayerRecursive(obj: THREE.Object3D, layer: number) {
   obj.traverse((child) => {
@@ -99,8 +107,7 @@ function applyEnvMapToMaterials(
 
     material.envMap = texture
 
-    // Only force a material program refresh when crossing null/non-null.
-    // Swapping one non-null envMap for another of the same kind is much cheaper.
+    // Force a program refresh only when crossing null/non-null.
     if ((prev == null) !== (texture == null)) {
       material.needsUpdate = true
     }
@@ -127,56 +134,52 @@ export function StablePmremCubeCamera({
   disabled,
   ...props
 }: StablePmremCubeCameraProps) {
-  const gl = useThree((s) => s.gl)
+  const gl = useThree((s) => s.gl) as unknown as THREE.Renderer & RendererLike
   const scene = useThree((s) => s.scene)
   const groupRef = useRef<THREE.Group>(null)
   const frameCountRef = useRef(0)
 
   if (disabled) {
-    return <group ref={groupRef} {...props}>{children}</group>
+    return (
+      <group ref={groupRef} {...props}>
+        {children}
+      </group>
+    )
   }
 
-  // Raw cube capture target
+  // Raw cube capture target.
   const cubeRT = useMemo(() => {
-    const rt = new THREE.WebGLCubeRenderTarget(resolution)
+    const rt = new THREE.CubeRenderTarget(resolution)
     rt.texture.type = THREE.HalfFloatType
     return rt
   }, [resolution])
 
-  // PMREM generator
-  const pmremGenerator = useMemo(() => {
-    const gen = new THREE.PMREMGenerator(gl)
-    gen.compileCubemapShader()
-    return gen
-  }, [gl])
-
-  // Cube camera
+  // Cube camera.
   const cubeCamera = useMemo(() => {
     const cam = new THREE.CubeCamera(near, far, cubeRT)
+
     if (excludeLayer !== undefined) {
       cam.layers.enableAll()
       cam.layers.disable(excludeLayer)
     }
+
     return cam
   }, [near, far, cubeRT, excludeLayer])
 
-  // The PMREM currently displayed on the material
-  const currentPmremRef = useRef<THREE.WebGLRenderTarget | null>(null)
+  // The texture currently displayed on the material.
+  const currentEnvMapRef = useRef<THREE.Texture | null>(null)
 
-  // Newly generated PMREM waiting to be adopted
-  const pendingPmremRef = useRef<THREE.WebGLRenderTarget | null>(null)
+  // Newly captured cubemap waiting to be adopted.
+  const pendingEnvMapRef = useRef<THREE.Texture | null>(null)
   const pendingReadyFrameRef = useRef<number | null>(null)
 
   useEffect(() => {
     return () => {
       cubeRT.dispose()
-      pmremGenerator.dispose()
-      currentPmremRef.current?.dispose()
-      pendingPmremRef.current?.dispose()
-      currentPmremRef.current = null
-      pendingPmremRef.current = null
+      currentEnvMapRef.current = null
+      pendingEnvMapRef.current = null
     }
-  }, [cubeRT, pmremGenerator])
+  }, [cubeRT])
 
   useEffect(() => {
     if (excludeLayer !== undefined && groupRef.current) {
@@ -185,38 +188,34 @@ export function StablePmremCubeCamera({
   }, [excludeLayer])
 
   useEffect(() => {
-    if (initialEnvMap !== undefined) {
-      applyEnvMapToMaterials(materialRefs, initialEnvMap)
-    }
+    applyEnvMapToMaterials(materialRefs, initialEnvMap)
+    currentEnvMapRef.current = initialEnvMap
   }, [materialRefs, initialEnvMap])
 
-  const adoptPendingPmremIfReady = useCallback(() => {
-    const pending = pendingPmremRef.current
+  const adoptPendingEnvMapIfReady = useCallback(() => {
+    const pending = pendingEnvMapRef.current
     const readyFrame = pendingReadyFrameRef.current
 
     if (!pending || readyFrame == null) return
     if (frameCountRef.current < readyFrame) return
 
-    const previousCurrent = currentPmremRef.current
-    currentPmremRef.current = pending
-    pendingPmremRef.current = null
+    currentEnvMapRef.current = pending
+    pendingEnvMapRef.current = null
     pendingReadyFrameRef.current = null
 
-    applyEnvMapToMaterials(materialRefs, pending.texture)
-
-    previousCurrent?.dispose()
+    applyEnvMapToMaterials(materialRefs, pending)
   }, [materialRefs])
 
-  const captureToPendingPmrem = useCallback(() => {
+  const captureToPendingEnvMap = useCallback(() => {
     const originalFog = scene.fog
     const originalBackground = scene.background
-    const originalShadowAutoUpdate = gl.shadowMap.autoUpdate
+    const originalShadowAutoUpdate = gl.shadowMap?.autoUpdate
     const originalAutoClear = gl.autoClear
 
     scene.background = envMap ?? originalBackground
     scene.fog = fog ?? originalFog
 
-    if (disableShadowsDuringCapture) {
+    if (disableShadowsDuringCapture && gl.shadowMap) {
       gl.shadowMap.autoUpdate = false
     }
 
@@ -227,24 +226,25 @@ export function StablePmremCubeCamera({
     cubeCamera.update(gl, scene)
 
     gl.autoClear = originalAutoClear
-    gl.shadowMap.autoUpdate = originalShadowAutoUpdate
+
+    if (disableShadowsDuringCapture && gl.shadowMap && originalShadowAutoUpdate !== undefined) {
+      gl.shadowMap.autoUpdate = originalShadowAutoUpdate
+    }
+
     scene.fog = originalFog
     scene.background = originalBackground
 
-    // Generate PMREM from the freshly captured cubemap.
-    const nextPmrem = pmremGenerator.fromCubemap(cubeRT.texture)
+    // Important for dynamic env maps:
+    // tell three.js the captured texture changed and its PMREM must be refreshed.
+    cubeRT.texture.needsPMREMUpdate = true
 
-    // Do not adopt immediately. Keep it pending.
-    // If there is an older unadopted pending target, replace/dispose it.
-    pendingPmremRef.current?.dispose()
-    pendingPmremRef.current = nextPmrem
+    pendingEnvMapRef.current = cubeRT.texture
     pendingReadyFrameRef.current = frameCountRef.current + adoptDelayFrames
   }, [
     gl,
     scene,
     cubeCamera,
     cubeRT,
-    pmremGenerator,
     envMap,
     fog,
     disableShadowsDuringCapture,
@@ -258,22 +258,25 @@ export function StablePmremCubeCamera({
     frameCountRef.current += 1
     const currentCount = frameCountRef.current
 
-    // Step 1: adopt last frame's PMREM if it is now considered safe.
-    adoptPendingPmremIfReady()
+    // Step 1: adopt last frame's captured env map if ready.
+    adoptPendingEnvMapIfReady()
 
-    // Step 2: decide whether to capture a new cubemap this frame.
-    if (currentCount !== firstFrame && (frameInterval === 0 || currentCount % frameInterval !== 0)) {
-      return
-    }
+    // Step 2: decide whether to capture this frame.
+    const shouldCapture =
+      currentCount === firstFrame ||
+      (frameInterval > 0 && currentCount > firstFrame && currentCount % frameInterval === 0)
+
+    if (!shouldCapture) return
 
     if (useVisibilityHide) {
       groupRef.current.visible = false
-      captureToPendingPmrem()
+      captureToPendingEnvMap()
       groupRef.current.visible = true
     } else {
-      captureToPendingPmrem()
+      captureToPendingEnvMap()
     }
-    adoptPendingPmremIfReady()
+
+    adoptPendingEnvMapIfReady()
   }, renderPriority)
 
   return (
