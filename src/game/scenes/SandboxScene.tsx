@@ -63,6 +63,7 @@ export function SandboxScene() {
   const { progress: loadingProgress } = useProgress();
   const gpuTier = useGpuTier();
   const hdrPath = useGameStore(state => state.hdrPath);
+  const scenePass = useGameStore(state => state.scenePass);
   const setHdrPath = useGameStore(state => state.setHdrPath);
   const setInitialFramesRendered = useGameStore(state => state.setInitialFramesRendered);
   const frameRef = useRef(0);
@@ -89,6 +90,10 @@ export function SandboxScene() {
     () => sceneRotatedSunPosition.clone().negate().normalize(),
     [sceneRotatedSunPosition],
   );
+
+  const sceneDepthNode = useMemo(() => {
+    return scenePass?.getTextureNode('depth');
+  }, [scenePass]);
 
   const aoExcludeLayer = 10;
   const particlesLayer = 11;
@@ -563,6 +568,7 @@ export function SandboxScene() {
           sunGlowStrength={1.4}
           spawnFadeInTime={0.7}
           layer={particlesLayer}
+          sceneDepthNode={sceneDepthNode}
         />
       )}
 

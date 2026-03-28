@@ -1,5 +1,5 @@
 import { useFrame, useThree } from '@react-three/fiber'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useState } from 'react'
 import type { WebGPURenderer } from 'three/webgpu'
 import * as THREE from 'three/webgpu'
 import { RenderPipeline } from 'three/webgpu'
@@ -30,6 +30,7 @@ import { fxaa } from 'three/examples/jsm/tsl/display/FXAANode.js'
 import { smaa } from 'three/examples/jsm/tsl/display/SMAANode.js'
 import { ssgi } from 'three/examples/jsm/tsl/display/SSGINode.js'
 import { ssr } from 'three/examples/jsm/tsl/display/SSRNode.js'
+import { useGameStore } from '../game/state/useGameStore'
 import { asType } from '../game/utility/types'
 
 type GpuTierLike = {
@@ -78,12 +79,15 @@ export function WebGPUPostFX({
   aoExcludeLayer = 10,
   particlesLayer = 11,
   enableFxaa = false,
-  enableSmaa = false,
+  enableSmaa = true,
   resolutionScale = 1,
 }: WebGPUPostFXProps) {
   const gl = useThree((s) => s.gl) as unknown as WebGPURenderer
   const scene = useThree((s) => s.scene)
   const camera = useThree((s) => s.camera)
+  const setScenePass = useGameStore((s) => s.setScenePass)
+
+  const [pipeline, setPipeline] = useState<RenderPipeline | undefined>()
 
   const aoAllowed =
     enableAO &&
@@ -122,15 +126,12 @@ export function WebGPUPostFX({
     }
   }, [scene, aoAllowed, ssgiAllowed])
 
-  const pipeline = useMemo(() => {
-    if (!gl || !scene || !camera) return null
-
-    if (!gl?.isWebGPURenderer) return null
-
-    const renderPipeline = new RenderPipeline(gl)
-
-    const cameraLayers = new THREE.Layers()
-    cameraLayers.mask = camera.layers.mask
+  useEffect(() => {
+    if (!gl || !scene || !camera || !gl.isWebGPURenderer) {
+      setScenePass(undefined)
+      setPipeline(undefined)
+      return
+    }
 
     // Main scene pass
     const scenePass = pass(scene, camera, {
@@ -138,13 +139,16 @@ export function WebGPUPostFX({
         magFilter: THREE.LinearFilter,
         samples: 0,
     })
+
     scenePass.setResolutionScale(resolutionScale)
     if (particlesLayer !== undefined) {
       const mainLayers = new THREE.Layers()
-      mainLayers.mask = cameraLayers.mask
+      mainLayers.mask = camera.layers.mask
       mainLayers.disable(particlesLayer)
       scenePass.setLayers(mainLayers)
     }
+
+    const renderPipeline = new RenderPipeline(gl)
 
     // AO scene pass: same scene, but excluding objects on the aoExcludeLayer
     const aoScenePass = aoAllowed ? pass(scene, camera) : undefined
@@ -397,9 +401,13 @@ export function WebGPUPostFX({
     // are applied at the end automatically.
     renderPipeline.outputNode = colorNode
     renderPipeline.outputColorTransform = false
-    //renderPipeline.needsUpdate = true
 
-    return renderPipeline
+    setPipeline(renderPipeline)
+    setScenePass(scenePass)
+
+    return () => {
+      pipeline?.dispose()
+    }
   }, [
     gl,
     scene,
@@ -411,12 +419,6 @@ export function WebGPUPostFX({
     enableContrast,
     enableVignette,
   ])
-
-  useEffect(() => {
-    return () => {
-      pipeline?.dispose()
-    }
-  }, [pipeline])
 
   // Take over rendering so R3F doesn't also do its normal gl.render(scene, camera).
   useFrame(({ gl }) => {

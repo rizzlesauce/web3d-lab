@@ -54,7 +54,7 @@ export function GameCanvas({
   }, [])
 
   const powerPreference: GPUPowerPreference = "high-performance";
-  const samples = gpuTier.tier >= 3 ? 4 : 2
+  const samples = asType<boolean>(true) ? 0 : gpuTier.tier >= 3 ? 4 : 2
   const alpha = asType<boolean>(true)
 
   const createRenderer = useCallback(async (props: DefaultGLProps) => {
@@ -64,6 +64,7 @@ export function GameCanvas({
       try {
         console.log("Creating WebGPU renderer with props:", props, 'overrides:', { samples, alpha, forceWebGL, powerPreference });
 
+        setInitialFramesRendered(false);
         const renderer = new THREE.WebGPURenderer({
           ...props as WebGPURendererParameters,
           antialias: samples > 1,
@@ -73,7 +74,6 @@ export function GameCanvas({
           forceWebGL: forcingWebGL,
         })
         await renderer.init();
-        setInitialFramesRendered(false);
         return renderer;
       } catch (err: any) {
         if (forcingWebGL) {

@@ -20,6 +20,8 @@ type GameState = {
   togglePaused: () => void;
   hdrPath?: string;
   setHdrPath: (path: string | undefined) => void;
+  scenePass?: THREE.PassNode;
+  setScenePass: (pass: THREE.PassNode | undefined) => void;
 };
 
 export const useGameStore = create<GameState>(set => ({
@@ -37,4 +39,6 @@ export const useGameStore = create<GameState>(set => ({
   togglePaused: () => set(s => ({ paused: !s.paused })),
   hdrPath: undefined,
   setHdrPath: (path) => set({ hdrPath: path }),
+  scenePass: undefined,
+  setScenePass: (pass) => set({ scenePass: pass }),
 }));

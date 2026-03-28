@@ -1,6 +1,6 @@
 import { useFrame, useLoader, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
-import { attribute, depth, depthPass, float, screenUV, smoothstep, texture, uniform, uv } from "three/tsl";
+import { attribute, depth, float, screenUV, smoothstep, texture, uniform, uv } from "three/tsl";
 import * as THREE from "three/webgpu";
 
 type AtmospherePollenProps = {
@@ -22,7 +22,7 @@ type AtmospherePollenProps = {
   spawnFadeInTime?: number;
 
   layer?: number;
-  visibleDepthTest?: boolean;
+  sceneDepthNode?: THREE.TextureNode;
 };
 
 const timer = new THREE.Timer();
@@ -45,7 +45,7 @@ export function AtmospherePollenCylinder({
   sunGlowStrength = 1.2,
   spawnFadeInTime = 1.0,
   layer = 11,
-  visibleDepthTest = true,
+  sceneDepthNode,
 }: AtmospherePollenProps) {
   const { camera, size: viewportSize, scene } = useThree();
 
@@ -103,7 +103,7 @@ export function AtmospherePollenCylinder({
     const mat = new THREE.MeshBasicNodeMaterial();
     mat.transparent = true;
     mat.depthWrite = false;
-    mat.depthTest = !visibleDepthTest;
+    mat.depthTest = !sceneDepthNode;
     mat.blending = THREE.AdditiveBlending;
     mat.alphaTest = 0.01;
     mat.fog = true;
@@ -119,17 +119,8 @@ export function AtmospherePollenCylinder({
 
     const baseOpacity = tex.a.mul(instanceAlpha).mul(opacityUniform)
 
-    if (visibleDepthTest) {
-      const opaqueDepthPass = depthPass(scene, camera)
-      const depthLayers = new THREE.Layers()
-      depthLayers.mask = camera.layers.mask
-      depthLayers.disable(layer)
-      opaqueDepthPass.setLayers(depthLayers)
-
-      const opaqueDepthTex = opaqueDepthPass.getTextureNode('depth')
-
-      // Depth of already-rendered opaque/postprocessed scene
-      const opaqueDepth = opaqueDepthTex.sample(screenUV).r
+    if (sceneDepthNode) {
+      const opaqueDepth = sceneDepthNode.sample(screenUV).r
 
       // Current particle fragment depth
       const particleDepth = depth
@@ -150,7 +141,13 @@ export function AtmospherePollenCylinder({
     }
 
     return mat
-  }, [sprite, scene, camera, layer]);
+  }, [
+    sprite,
+    scene,
+    camera,
+    layer,
+    sceneDepthNode,
+  ]);
 
   useEffect(() => {
     return () => {
