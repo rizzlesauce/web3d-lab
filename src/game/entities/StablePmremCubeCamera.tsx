@@ -1,9 +1,9 @@
 import { useFrame, useThree, type ThreeElements } from '@react-three/fiber'
 import * as React from 'react'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react'
+import { pmremTexture, reflectVector, rotate, uniform } from 'three/tsl'
 import * as THREE from 'three/webgpu'
-
-type SupportedEnvMaterial = THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial
+import { asType } from '../utility/types'
 
 type CubeCameraOptions = {
   resolution?: number
@@ -12,11 +12,15 @@ type CubeCameraOptions = {
   envMap?: THREE.Texture | null
   fog?: THREE.Fog | THREE.FogExp2 | null
 
+  cameraMask?: number
+
   /**
-   * If provided, the cube camera will not render this layer.
-   * Put the reflective object on this layer instead of hiding it.
+   * If provided, the cube camera will not render these layer.
+   * Put the reflective object on one of these layers instead of hiding it.
    */
-  excludeLayer?: number
+  excludeLayers?: number | number[]
+
+  includeLayers?: number | number[]
 
   /**
    * If true, temporarily disables renderer shadow-map auto updates
@@ -34,18 +38,14 @@ type StablePmremCubeCameraProps = Omit<ThreeElements['group'], 'children'> &
   CubeCameraOptions & {
     /**
      * The subtree that should be excluded from the capture
-     * (either by visibility hide or excludeLayer).
+     * (either by visibility hide or excludeLayers).
      */
-    children?: React.ReactNode
+    children?: (props: { envNode?: THREE.Node | null }) => React.ReactNode
+
+    envRotation?: [number, number, number] | undefined
 
     /**
-     * Materials whose envMap should be swapped imperatively.
-     * This avoids React rerenders.
-     */
-    materialRefs: Array<React.RefObject<SupportedEnvMaterial | null>>
-
-    /**
-     * If excludeLayer is undefined, the subtree will be hidden during capture.
+     * If excludeLayers is undefined or empty, the subtree will be hidden during capture.
      */
     useVisibilityHide?: boolean
 
@@ -87,51 +87,26 @@ type RendererLike = {
   }
 }
 
-function setLayerRecursive(obj: THREE.Object3D, layer: number) {
-  obj.traverse((child) => {
-    child.layers.disableAll()
-    child.layers.enable(layer)
-  })
-}
-
-function applyEnvMapToMaterials(
-  materialRefs: Array<React.RefObject<SupportedEnvMaterial | null>>,
-  texture: THREE.Texture | null
-) {
-  for (const materialRef of materialRefs) {
-    const material = materialRef.current
-    if (!material) continue
-
-    const prev = material.envMap
-    if (prev === texture) continue
-
-    material.envMap = texture
-
-    // Force a program refresh only when crossing null/non-null.
-    if ((prev == null) !== (texture == null)) {
-      material.needsUpdate = true
-    }
-  }
-}
-
 export function StablePmremCubeCamera({
   children,
-  materialRefs,
+  envRotation = [0, 0, 0],
   resolution = 256,
   near = 0.1,
   far = 1000,
   envMap = null,
   fog = null,
-  excludeLayer,
+  excludeLayers = [],
+  includeLayers = [],
   disableShadowsDuringCapture = false,
   autoClearDuringCapture = false,
-  useVisibilityHide = excludeLayer === undefined,
+  useVisibilityHide,
   renderPriority,
   firstFrame = 3,
   frameInterval = 1,
   adoptDelayFrames = 0,
   initialEnvMap = null,
   disabled,
+  cameraMask = 0,
   ...props
 }: StablePmremCubeCameraProps) {
   const gl = useThree((s) => s.gl) as unknown as THREE.Renderer & RendererLike
@@ -139,78 +114,192 @@ export function StablePmremCubeCamera({
   const groupRef = useRef<THREE.Group>(null)
   const frameCountRef = useRef(0)
 
-  if (disabled) {
-    return (
-      <group ref={groupRef} {...props}>
-        {children}
-      </group>
-    )
-  }
+  const [rtA, setRtA] = useState<THREE.CubeRenderTarget | null>(null)
+  const [rtB, setRtB] = useState<THREE.CubeRenderTarget | null>(null)
+  const [cubeCameraA, setCubeCameraA] = useState<THREE.CubeCamera | null>(null)
+  const [cubeCameraB, setCubeCameraB] = useState<THREE.CubeCamera | null>(null)
+  const [envNode, setEnvNode] = useState<THREE.PMREMNode | null>(null)
 
-  // Raw cube capture target.
-  const cubeRT = useMemo(() => {
-    const rt = new THREE.CubeRenderTarget(resolution)
-    rt.texture.type = THREE.HalfFloatType
-    return rt
-  }, [resolution])
+  const rtsToDisposeRef = useRef<THREE.CubeRenderTarget[]>([])
+  const nodesToDisposeRef = useRef<THREE.Node[]>([])
 
-  // Cube camera.
-  const cubeCamera = useMemo(() => {
-    const cam = new THREE.CubeCamera(near, far, cubeRT)
+  const [envRotationUniformNode, setEnvRotationUniformNode] = useState<THREE.UniformNode<'vec3', THREE.Vector3> | null>(null)
 
-    if (excludeLayer !== undefined) {
-      cam.layers.enableAll()
-      cam.layers.disable(excludeLayer)
+  useEffect(() => {
+    if (disabled) {
+      return
     }
 
-    return cam
-  }, [near, far, cubeRT, excludeLayer])
+    const envRotationUniformNode = uniform(new THREE.Vector3())
+    setEnvRotationUniformNode(envRotationUniformNode)
+  }, [disabled])
 
-  // The texture currently displayed on the material.
-  const currentEnvMapRef = useRef<THREE.Texture | null>(null)
+  useEffect(() => {
+    if (envRotationUniformNode) {
+      return () => {
+        nodesToDisposeRef.current.push(envRotationUniformNode)
+      }
+    }
+  }, [envRotationUniformNode])
 
-  // Newly captured cubemap waiting to be adopted.
-  const pendingEnvMapRef = useRef<THREE.Texture | null>(null)
-  const pendingReadyFrameRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (disabled) {
+      return
+    }
+
+    const createTarget = () => {
+      const rt = new THREE.CubeRenderTarget(resolution, {
+        type: THREE.HalfFloatType,
+        // TODO: remove if not needed
+        //generateMipmaps: false,
+      })
+
+      // TODO: remove if not needed
+      //gl.initRenderTarget(rt)
+
+      return rt
+    }
+    const rtA = createTarget()
+    const rtB = createTarget()
+    setRtA(rtA)
+    setRtB(rtB)
+
+    return () => {
+      rtsToDisposeRef.current.push(rtA, rtB)
+    }
+  }, [
+    disabled,
+    resolution,
+    /*gl,*/
+  ])
+
+  const excludeLayersArray = useMemo(() => (Array.isArray(excludeLayers) ? excludeLayers : [excludeLayers]), [excludeLayers])
+  const includeLayersArray = useMemo(() => (Array.isArray(includeLayers) ? includeLayers : [includeLayers]), [includeLayers])
+
+  const useVisibilityHideResolved = useMemo(() => useVisibilityHide ?? excludeLayersArray.length > 0, [useVisibilityHide, excludeLayersArray])
+
+  useEffect(() => {
+    if (disabled) {
+      return
+    }
+
+    const createCamera = (rt: THREE.CubeRenderTarget) => {
+      return new THREE.CubeCamera(near, far, rt)
+    }
+
+    const cameraA = rtA ? createCamera(rtA) : null
+    const cameraB = rtB ? createCamera(rtB) : null
+
+    if (cameraA) {
+      setCubeCameraA(cameraA)
+    }
+    if (cameraB) {
+      setCubeCameraB(cameraB)
+    }
+  }, [
+    disabled,
+    rtA,
+    rtB,
+    near,
+    far,
+  ])
+
+  useLayoutEffect(() => {
+    if (disabled) {
+      return
+    }
+
+    const cams = [cubeCameraA, cubeCameraB]
+    cams.filter(c => !!c).forEach((cam) => {
+      const { layers } = cam
+      layers.mask = cameraMask
+      includeLayersArray.forEach((layer) => {
+        layers.enable(layer)
+      })
+      excludeLayersArray.forEach((layer) => {
+        layers.disable(layer)
+      })
+    })
+  }, [
+    disabled,
+    cubeCameraA,
+    cubeCameraB,
+    cameraMask,
+    includeLayersArray,
+    excludeLayersArray,
+  ])
+
+  useEffect(() => {
+    if (disabled) {
+      return
+    }
+
+    if (!rtA || !envRotationUniformNode) {
+      setEnvNode(null)
+      return
+    }
+
+    const rotationNode = rotate(reflectVector, envRotationUniformNode)
+    const envNode = pmremTexture(rtA.texture, rotationNode)
+    setEnvNode(envNode)
+
+    return () => {
+      nodesToDisposeRef.current.push(rotationNode, envNode)
+    }
+  }, [
+    disabled,
+    rtA,
+    envRotationUniformNode,
+  ])
+
+  useLayoutEffect(() => {
+    if (disabled) {
+      return
+    }
+
+    if (envRotationUniformNode) {
+      envRotationUniformNode.value.set(...envRotation)
+    }
+  }, [disabled, envRotationUniformNode, envRotation])
+
+  const disposeUnused = useCallback(() => {
+    while (nodesToDisposeRef.current.length > 0) {
+      const node = nodesToDisposeRef.current.pop()
+      if (node) {
+        if (asType<boolean>(false)) {
+          console.debug('Disposing node', node)
+        }
+        node.dispose()
+      }
+    }
+    while (rtsToDisposeRef.current.length > 0) {
+      const rt = rtsToDisposeRef.current.pop()
+      if (rt) {
+        if (asType<boolean>(false)) {
+          console.debug('Disposing render target', rt)
+        }
+        rt.dispose()
+      }
+    }
+  }, [])
 
   useEffect(() => {
     return () => {
-      cubeRT.dispose()
-      currentEnvMapRef.current = null
-      pendingEnvMapRef.current = null
+      disposeUnused()
     }
-  }, [cubeRT])
+  }, [envNode, disposeUnused])
 
-  useEffect(() => {
-    if (excludeLayer !== undefined && groupRef.current) {
-      setLayerRecursive(groupRef.current, excludeLayer)
+  const captureToPendingEnvMap = useCallback((cubeCamera: THREE.CubeCamera, rt: THREE.CubeRenderTarget) => {
+    if (disabled) {
+      return
     }
-  }, [excludeLayer])
 
-  useEffect(() => {
-    applyEnvMapToMaterials(materialRefs, initialEnvMap)
-    currentEnvMapRef.current = initialEnvMap
-  }, [materialRefs, initialEnvMap])
-
-  const adoptPendingEnvMapIfReady = useCallback(() => {
-    const pending = pendingEnvMapRef.current
-    const readyFrame = pendingReadyFrameRef.current
-
-    if (!pending || readyFrame == null) return
-    if (frameCountRef.current < readyFrame) return
-
-    currentEnvMapRef.current = pending
-    pendingEnvMapRef.current = null
-    pendingReadyFrameRef.current = null
-
-    applyEnvMapToMaterials(materialRefs, pending)
-  }, [materialRefs])
-
-  const captureToPendingEnvMap = useCallback(() => {
     const originalFog = scene.fog
     const originalBackground = scene.background
     const originalShadowAutoUpdate = gl.shadowMap?.autoUpdate
     const originalAutoClear = gl.autoClear
+    const originalAutoClearDepth = gl.autoClearDepth
+    const originalAutoClearStencil = gl.autoClearStencil
 
     scene.background = envMap ?? originalBackground
     scene.fog = fog ?? originalFog
@@ -221,11 +310,16 @@ export function StablePmremCubeCamera({
 
     if (autoClearDuringCapture) {
       gl.autoClear = true
+      // TODO: remove
+      //gl.autoClearDepth = true
+      //gl.autoClearStencil = true
     }
 
     cubeCamera.update(gl, scene)
 
     gl.autoClear = originalAutoClear
+    gl.autoClearDepth = originalAutoClearDepth
+    gl.autoClearStencil = originalAutoClearStencil
 
     if (disableShadowsDuringCapture && gl.shadowMap && originalShadowAutoUpdate !== undefined) {
       gl.shadowMap.autoUpdate = originalShadowAutoUpdate
@@ -234,55 +328,78 @@ export function StablePmremCubeCamera({
     scene.fog = originalFog
     scene.background = originalBackground
 
+    // TODO: remove as this does not appear to be necessary after all - texture renders fine without it
     // Important for dynamic env maps:
     // tell three.js the captured texture changed and its PMREM must be refreshed.
-    cubeRT.texture.needsPMREMUpdate = true
-
-    pendingEnvMapRef.current = cubeRT.texture
-    pendingReadyFrameRef.current = frameCountRef.current + adoptDelayFrames
+    if (asType<boolean>(false)) {
+      rt.texture.needsPMREMUpdate = true
+    }
   }, [
+    disabled,
     gl,
     scene,
-    cubeCamera,
-    cubeRT,
     envMap,
     fog,
     disableShadowsDuringCapture,
     autoClearDuringCapture,
-    adoptDelayFrames,
   ])
 
   useFrame(() => {
-    if (!groupRef.current) return
+    if (!groupRef.current) {
+      return
+    }
 
     frameCountRef.current += 1
     const currentCount = frameCountRef.current
-
-    // Step 1: adopt last frame's captured env map if ready.
-    adoptPendingEnvMapIfReady()
 
     // Step 2: decide whether to capture this frame.
     const shouldCapture =
       currentCount === firstFrame ||
       (frameInterval > 0 && currentCount > firstFrame && currentCount % frameInterval === 0)
 
-    if (!shouldCapture) return
-
-    if (useVisibilityHide) {
-      groupRef.current.visible = false
-      captureToPendingEnvMap()
-      groupRef.current.visible = true
-    } else {
-      captureToPendingEnvMap()
+    if (!shouldCapture) {
+      return
     }
 
-    adoptPendingEnvMapIfReady()
+    if (disabled) {
+      return
+    }
+
+    let cubeCamera = cubeCameraA
+    let rtWrite = rtA
+
+    if (asType<boolean>(false)) {
+      // double buffering
+      rtWrite = currentCount % 2 ? rtA : rtB
+      const rtRead = currentCount % 2 ? rtB : rtA
+      cubeCamera = currentCount % 2 ? cubeCameraA : cubeCameraB
+      if (envNode && rtRead) {
+        envNode.value = rtRead.texture
+      }
+    }
+
+    if (cubeCamera && rtWrite) {
+      if (useVisibilityHideResolved) {
+        groupRef.current.visible = false
+        captureToPendingEnvMap(cubeCamera, rtWrite)
+        groupRef.current.visible = true
+      } else {
+        captureToPendingEnvMap(cubeCamera, rtWrite)
+      }
+    }
   }, renderPriority)
 
   return (
     <group {...props}>
-      <primitive object={cubeCamera} />
-      <group ref={groupRef}>{children}</group>
+      {cubeCameraA && (
+        <primitive object={cubeCameraA} />
+      )}
+      {cubeCameraB && (
+        <primitive object={cubeCameraB} />
+      )}
+      <group ref={groupRef}>
+        {children?.({ envNode: disabled ? undefined : envNode })}
+      </group>
     </group>
   )
 }

@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { asType } from '../utility/types';
 
 export function Ground() {
   const size = 75;
@@ -32,7 +33,9 @@ export function Ground() {
         receiveShadow
       >
         <planeGeometry args={[size, size]} />
-        <shadowMaterial opacity={0.3} />
+        {asType<boolean>(false) && (
+          <shadowMaterial opacity={0.3} />
+        )}
       </mesh>
     </>
   );

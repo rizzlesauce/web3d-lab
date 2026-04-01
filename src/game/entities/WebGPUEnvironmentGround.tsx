@@ -182,7 +182,14 @@ function WebGPUGroundEnvironment(props: WebGPUEnvironmentProps) {
     mesh.frustumCulled = false;
 
     return mesh;
-  }, [texture, height, radius, meshResolution, scale, bgRotation]);
+  }, [
+    texture,
+    height,
+    radius,
+    meshResolution,
+    scale,
+    bgRotation,
+  ]);
 
   React.useLayoutEffect(() => {
     if (!texture) return;
@@ -215,7 +222,9 @@ function WebGPUGroundEnvironment(props: WebGPUEnvironmentProps) {
 
   React.useEffect(() => {
     return () => {
-      if (!groundedSkybox) return;
+      if (!groundedSkybox) {
+        return;
+      }
       groundedSkybox.geometry.dispose();
       (groundedSkybox.material as THREE.Material).dispose();
     };
@@ -223,7 +232,7 @@ function WebGPUGroundEnvironment(props: WebGPUEnvironmentProps) {
 
   if (!groundedSkybox || !background) return null;
 
-  return <primitive object={groundedSkybox} {...rest} />;
+  return <primitive object={groundedSkybox} {...rest} dispose={null} />;
 }
 
 /**

@@ -1,9 +1,18 @@
 import { useFrame, useLoader, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
-import { attribute, depth, float, screenUV, smoothstep, texture, uniform, uv } from "three/tsl";
+import {
+  attribute,
+  depth,
+  float,
+  screenUV,
+  smoothstep,
+  texture,
+  uniform,
+  uv,
+} from "three/tsl";
 import * as THREE from "three/webgpu";
 
-type AtmospherePollenProps = {
+type AtmospherePollenCylinderProps = {
   count?: number;
   texturePath?: string;
   color?: THREE.ColorRepresentation;
@@ -21,18 +30,32 @@ type AtmospherePollenProps = {
   sunGlowStrength?: number;
   spawnFadeInTime?: number;
 
+  // Separate layers for the two render proxies
   layer?: number;
-  sceneDepthNode?: THREE.TextureNode;
+  layer2?: number;
+
+  sceneDepthNode?: THREE.TextureNode | null;
 };
 
 const timer = new THREE.Timer();
 
-export function AtmospherePollenCylinder({
+type PollenCore = {
+  count: number;
+  sprite: THREE.Texture;
+  geometry: THREE.PlaneGeometry;
+  alphaAttr: THREE.InstancedBufferAttribute;
+  colorAttr: THREE.InstancedBufferAttribute;
+  instanceAlpha: Float32Array;
+  instanceColor: Float32Array;
+  meshRef: React.MutableRefObject<THREE.InstancedMesh | null>;
+  cubeMeshRef: React.MutableRefObject<THREE.InstancedMesh | null>;
+};
+
+function useAtmospherePollenCore({
   count = 260,
   texturePath = "/particle_sprite_soft_warm.png",
   color = "#fff4c8",
   size = 18,
-  opacity = 0.6,
 
   radius = 12,
   minY = 0.5,
@@ -44,18 +67,18 @@ export function AtmospherePollenCylinder({
   sunlightDirection = new THREE.Vector3(-8, -12, -6),
   sunGlowStrength = 1.2,
   spawnFadeInTime = 1.0,
-  layer = 11,
-  sceneDepthNode,
-}: AtmospherePollenProps) {
-  const { camera, size: viewportSize, scene } = useThree();
+}: Omit<
+  AtmospherePollenCylinderProps,
+  "layer" | "layer2" | "sceneDepthNode" | "opacity"
+>): PollenCore {
+  const camera = useThree((s) => s.camera);
+  const viewportSize = useThree((s) => s.size);
 
   const meshRef = useRef<THREE.InstancedMesh | null>(null);
-  const opacityUniformRef = useRef<THREE.UniformNode<'float', number> | null>(null);
+  const cubeMeshRef = useRef<THREE.InstancedMesh | null>(null);
 
   const sprite = useLoader(THREE.TextureLoader, texturePath);
 
-  // Do not dispose this texture manually.
-  // useLoader caches/shared resources; disposing can race with in-flight WebGPU submits.
   useEffect(() => {
     sprite.colorSpace = THREE.SRGBColorSpace;
     sprite.wrapS = THREE.ClampToEdgeWrapping;
@@ -93,99 +116,19 @@ export function AtmospherePollenCylinder({
     };
   }, [count]);
 
-  useEffect(() => {
-    return () => {
-      quadGeometry.geometry.dispose();
-    };
-  }, [quadGeometry]);
-
-  const material = useMemo(() => {
-    const mat = new THREE.MeshBasicNodeMaterial();
-    mat.transparent = true;
-    mat.depthWrite = false;
-    mat.depthTest = !sceneDepthNode;
-    mat.blending = THREE.AdditiveBlending;
-    mat.alphaTest = 0.01;
-    mat.fog = true;
-
-    const tex = texture(sprite, uv());
-    const instanceAlpha = attribute<"float">("instanceAlpha");
-    const instanceColor = attribute<"vec3">("instanceColor");
-    const opacityUniform = uniform(opacity, "float");
-
-    opacityUniformRef.current = opacityUniform;
-
-    mat.colorNode = tex.rgb.mul(instanceColor);
-
-    const baseOpacity = tex.a.mul(instanceAlpha).mul(opacityUniform)
-
-    if (sceneDepthNode) {
-      const opaqueDepth = sceneDepthNode.sample(screenUV).r
-
-      // Current particle fragment depth
-      const particleDepth = depth
-
-      const depthBias = float(0.0015)
-      const depthFeather = float(0.003)
-
-      // Visible if particle is in front of the opaque scene depth
-      const visibleMask = smoothstep(
-        particleDepth.sub(depthBias),
-        particleDepth.add(depthFeather),
-        opaqueDepth
-      )
-
-      mat.opacityNode = baseOpacity.mul(visibleMask)
-    } else {
-      mat.opacityNode = baseOpacity
-    }
-
-    return mat
-  }, [
-    sprite,
-    scene,
-    camera,
-    layer,
-    sceneDepthNode,
-  ]);
-
-  useEffect(() => {
-    return () => {
-      material.dispose();
-    };
-  }, [material]);
-
-  useEffect(() => {
-    if (opacityUniformRef.current) {
-      opacityUniformRef.current.value = opacity;
-    }
-  }, [opacity]);
-
   const particleState = useMemo(() => {
-    const centers = new Float32Array(count * 3);
-    const velocities = new Float32Array(count * 3);
-    const ages = new Float32Array(count);
-    const spawnAges = new Float32Array(count);
-    const lifetimes = new Float32Array(count);
-    const seeds = new Float32Array(count);
-    const swayAmp = new Float32Array(count);
-    const swayFreq = new Float32Array(count);
-    const scales = new Float32Array(count);
-    const alphas = new Float32Array(count);
-    const brightness = new Float32Array(count);
-
     return {
-      centers,
-      velocities,
-      ages,
-      spawnAges,
-      lifetimes,
-      seeds,
-      swayAmp,
-      swayFreq,
-      scales,
-      alphas,
-      brightness,
+      centers: new Float32Array(count * 3),
+      velocities: new Float32Array(count * 3),
+      ages: new Float32Array(count),
+      spawnAges: new Float32Array(count),
+      lifetimes: new Float32Array(count),
+      seeds: new Float32Array(count),
+      swayAmp: new Float32Array(count),
+      swayFreq: new Float32Array(count),
+      scales: new Float32Array(count),
+      alphas: new Float32Array(count),
+      brightness: new Float32Array(count),
     };
   }, [count]);
 
@@ -246,11 +189,12 @@ export function AtmospherePollenCylinder({
 
     quadGeometry.alphaAttr.needsUpdate = true;
     quadGeometry.colorAttr.needsUpdate = true;
-  }, [count]); // intentional
+  }, [count, quadGeometry.alphaAttr, quadGeometry.colorAttr]);
 
   useFrame((_state, delta) => {
     const mesh = meshRef.current;
-    if (!mesh) return;
+    const cubeMesh = cubeMeshRef.current;
+    if (!mesh && !cubeMesh) return;
 
     const dt = Math.min(delta, 1 / 10);
 
@@ -372,18 +316,16 @@ export function AtmospherePollenCylinder({
       }
 
       mvPos.copy(worldPos).applyMatrix4(camera.matrixWorldInverse);
-      const depth = Math.max(0.0001, -mvPos.z);
+      const viewDepth = Math.max(0.0001, -mvPos.z);
 
-      // Exact replacement for:
-      // gl_PointSize = max(2.0, uSize * (180.0 / -mvPosition.z));
-      const pointSizePx = Math.max(2.0, size * (180.0 / depth));
+      const pointSizePx = Math.max(2.0, size * (180.0 / viewDepth));
 
       let halfWorldSize = 0.01;
 
       if ((camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
         const perspectiveCamera = camera as THREE.PerspectiveCamera;
         const fovRad = THREE.MathUtils.degToRad(perspectiveCamera.fov);
-        const worldHeightAtDepth = 2 * depth * Math.tan(fovRad * 0.5);
+        const worldHeightAtDepth = 2 * viewDepth * Math.tan(fovRad * 0.5);
         const worldPerPixel = worldHeightAtDepth / viewportSize.height;
         halfWorldSize = pointSizePx * 0.5 * worldPerPixel;
       } else if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
@@ -401,7 +343,8 @@ export function AtmospherePollenCylinder({
       dummy.scale.set(halfWorldSize, halfWorldSize, 1);
       dummy.updateMatrix();
 
-      mesh.setMatrixAt(i, dummy.matrix);
+      if (mesh) mesh.setMatrixAt(i, dummy.matrix);
+      if (cubeMesh) cubeMesh.setMatrixAt(i, dummy.matrix);
 
       quadGeometry.instanceAlpha[i] = particleState.alphas[i];
       quadGeometry.instanceColor[i3 + 0] = baseColor.r * bright;
@@ -409,23 +352,181 @@ export function AtmospherePollenCylinder({
       quadGeometry.instanceColor[i3 + 2] = baseColor.b * bright;
     }
 
-    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh) mesh.instanceMatrix.needsUpdate = true;
+    if (cubeMesh) cubeMesh.instanceMatrix.needsUpdate = true;
+
     quadGeometry.alphaAttr.needsUpdate = true;
     quadGeometry.colorAttr.needsUpdate = true;
   });
 
+  return {
+    count,
+    sprite,
+    geometry: quadGeometry.geometry,
+    alphaAttr: quadGeometry.alphaAttr,
+    colorAttr: quadGeometry.colorAttr,
+    instanceAlpha: quadGeometry.instanceAlpha,
+    instanceColor: quadGeometry.instanceColor,
+    meshRef,
+    cubeMeshRef,
+  };
+}
+
+function useAtmospherePollenMaterial(
+  sprite: THREE.Texture,
+  opacity: number,
+  sceneDepthNode?: THREE.TextureNode | null
+) {
+  const opacityUniformRef =
+    useRef<THREE.UniformNode<"float", number> | null>(null);
+
+  const material = useMemo(() => {
+    const mat = new THREE.MeshBasicNodeMaterial();
+    mat.transparent = true;
+    mat.depthWrite = false;
+    mat.depthTest = !sceneDepthNode;
+    mat.blending = THREE.AdditiveBlending;
+    mat.alphaTest = 0.01;
+    mat.fog = true;
+
+    const tex = texture(sprite, uv());
+    const instanceAlpha = attribute<"float">("instanceAlpha");
+    const instanceColor = attribute<"vec3">("instanceColor");
+    const opacityUniform = uniform(opacity, "float");
+
+    opacityUniformRef.current = opacityUniform;
+
+    mat.colorNode = tex.rgb.mul(instanceColor);
+
+    const baseOpacity = tex.a.mul(instanceAlpha).mul(opacityUniform);
+
+    if (sceneDepthNode) {
+      const opaqueDepth = sceneDepthNode.sample(screenUV).r;
+      const particleDepth = depth;
+
+      const depthBias = float(0.0015);
+      const depthFeather = float(0.003);
+
+      const visibleMask = smoothstep(
+        particleDepth.sub(depthBias),
+        particleDepth.add(depthFeather),
+        opaqueDepth
+      );
+
+      mat.opacityNode = baseOpacity.mul(visibleMask);
+    } else {
+      mat.opacityNode = baseOpacity;
+    }
+
+    return mat;
+  }, [sprite, opacity, sceneDepthNode]);
+
+  useEffect(() => {
+    if (opacityUniformRef.current) {
+      opacityUniformRef.current.value = opacity;
+    }
+  }, [opacity]);
+
+  return material;
+}
+
+export function AtmospherePollenCylinderSingle({
+  core,
+  layer,
+  opacity = 0.6,
+  sceneDepthNode = null,
+}: {
+  core: ReturnType<typeof useAtmospherePollenCore>
+  layer: number
+  opacity: number
+  sceneDepthNode?: THREE.TextureNode | null
+}) {
+  const material = useAtmospherePollenMaterial(
+    core.sprite,
+    opacity,
+    sceneDepthNode
+  );
+
+  useEffect(() => {
+    return () => {
+      material.dispose();
+    };
+  }, [material]);
+
   return (
     <instancedMesh
-      ref={meshRef}
-      args={[quadGeometry.geometry, material, count]}
+      ref={core.meshRef}
+      args={[core.geometry, material, core.count]}
+      dispose={null}
       frustumCulled={false}
-      renderOrder={10}
-      /*
-      userData={{
-        cannotReceiveAO: true,
-      }}
-      */
+      //renderOrder={10}
       layers={layer}
     />
+  );
+}
+
+export function AtmospherePollenCylinder({
+  count = 260,
+  texturePath = "/particle_sprite_soft_warm.png",
+  color = "#fff4c8",
+  size = 18,
+  opacity = 0.6,
+
+  radius = 12,
+  minY = 0.5,
+  maxY = 8,
+  groundY = 0.05,
+  fadeY = 0.2,
+
+  baseWind = [0.035, -0.06, 0.01],
+  sunlightDirection = new THREE.Vector3(-8, -12, -6),
+  sunGlowStrength = 1.2,
+  spawnFadeInTime = 1.0,
+
+  layer = 1,
+  layer2,
+  sceneDepthNode = null,
+}: AtmospherePollenCylinderProps) {
+  const core = useAtmospherePollenCore({
+    count,
+    texturePath,
+    color,
+    size,
+    radius,
+    minY,
+    maxY,
+    groundY,
+    fadeY,
+    baseWind,
+    sunlightDirection,
+    sunGlowStrength,
+    spawnFadeInTime,
+  });
+
+  useEffect(() => {
+    return () => {
+      core.sprite.dispose();
+      core.geometry.dispose();
+    };
+  }, [core]);
+
+  return (
+    <>
+      <AtmospherePollenCylinderSingle
+        core={core}
+        layer={layer}
+        opacity={opacity}
+        sceneDepthNode={sceneDepthNode}
+      />
+
+      {layer2 !== undefined && (
+        <AtmospherePollenCylinderSingle
+          core={core}
+          layer={layer2}
+          opacity={opacity}
+          sceneDepthNode={null}
+        />
+      )}
+    </>
   );
 }

@@ -1,5 +1,5 @@
 import { useFrame, useThree } from '@react-three/fiber'
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import type { WebGPURenderer } from 'three/webgpu'
 import * as THREE from 'three/webgpu'
 import { RenderPipeline } from 'three/webgpu'
@@ -56,9 +56,14 @@ type WebGPUPostFXProps = {
   enableSmaa?: boolean
 
   resolutionScale?: number
+  ssrExcludeLayers?: number | number[]
+  ssrIncludeLayers?: number | number[]
+  renderPriority?: number
+  cameraMask?: number
 }
 
 function toTextureNode(node: THREE.Node<'vec4'>): THREE.TextureNode {
+
   if ((node as THREE.TextureNode).isTextureNode) {
     return node as THREE.TextureNode
   }
@@ -76,11 +81,15 @@ export function WebGPUPostFX({
   enableVignette = true,
   enableDOF = true,
   enableSSR = true,
-  aoExcludeLayer = 10,
-  particlesLayer = 11,
+  aoExcludeLayer,
+  particlesLayer,
   enableFxaa = false,
   enableSmaa = true,
   resolutionScale = 1,
+  ssrExcludeLayers = [],
+  ssrIncludeLayers = [],
+  renderPriority = 1,
+  cameraMask = 0,
 }: WebGPUPostFXProps) {
   const gl = useThree((s) => s.gl) as unknown as WebGPURenderer
   const scene = useThree((s) => s.scene)
@@ -107,26 +116,33 @@ export function WebGPUPostFX({
 
   const ssrAllowed = asType<boolean>(true) && enableSSR && gpuTier.tier >= 1
 
+  const ssrExcludeLayersArray = useMemo(() => (Array.isArray(ssrExcludeLayers) ? ssrExcludeLayers : [ssrExcludeLayers]), [ssrExcludeLayers])
+  const ssrIncludeLayersArray = useMemo(() => (Array.isArray(ssrIncludeLayers) ? ssrIncludeLayers : [ssrIncludeLayers]), [ssrIncludeLayers])
+
   /**
    * Keep the AO exclusion layer in sync with userData.cannotReceiveAO.
    * We only touch the dedicated aoExcludeLayer bit, and preserve all other layers.
    */
   useEffect(() => {
-    if (aoAllowed || ssgiAllowed) {
+    if ((aoAllowed || ssgiAllowed) && aoExcludeLayer !== undefined) {
       scene.traverse((obj) => {
         if ((obj as THREE.Object3D).userData?.cannotReceiveAO) {
+          obj.layers.disableAll()
           obj.layers.enable(aoExcludeLayer)
           if (asType<boolean>(false)) {
             console.log('AO exclusion layer enabled for object', obj)
           }
-        } else {
-          obj.layers.disable(aoExcludeLayer)
         }
       })
     }
-  }, [scene, aoAllowed, ssgiAllowed])
+  }, [
+    aoAllowed,
+    ssgiAllowed,
+    scene,
+    aoExcludeLayer,
+  ])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!gl || !scene || !camera || !gl.isWebGPURenderer) {
       setScenePass(undefined)
       setPipeline(undefined)
@@ -141,12 +157,12 @@ export function WebGPUPostFX({
     })
 
     scenePass.setResolutionScale(resolutionScale)
+    const mainLayers = new THREE.Layers()
+    mainLayers.mask = cameraMask
     if (particlesLayer !== undefined) {
-      const mainLayers = new THREE.Layers()
-      mainLayers.mask = camera.layers.mask
       mainLayers.disable(particlesLayer)
-      scenePass.setLayers(mainLayers)
     }
+    scenePass.setLayers(mainLayers)
 
     const renderPipeline = new RenderPipeline(gl)
 
@@ -155,15 +171,28 @@ export function WebGPUPostFX({
     if (aoScenePass) {
       aoScenePass.setResolutionScale(resolutionScale)
       const aoLayers = new THREE.Layers()
-      aoLayers.mask = scenePass.getLayers().mask
-      aoLayers.disable(aoExcludeLayer)
+      aoLayers.mask = mainLayers.mask
+      if (aoExcludeLayer !== undefined) {
+        aoLayers.disable(aoExcludeLayer)
+      }
       aoScenePass.setLayers(aoLayers)
+    }
+
+    const ssrScenePass = ssrAllowed && (ssrExcludeLayersArray.length > 0 || ssrIncludeLayersArray.length > 0) ? pass(scene, camera) : undefined
+
+    if (ssrScenePass) {
+      ssrScenePass.setResolutionScale(resolutionScale)
+      const ssrLayers = new THREE.Layers()
+      ssrLayers.mask = mainLayers.mask
+      ssrExcludeLayersArray.forEach(layer => ssrLayers.disable(layer))
+      ssrIncludeLayersArray.forEach(layer => ssrLayers.enable(layer))
+      ssrScenePass.setLayers(ssrLayers)
     }
 
     const particlesPass = particlesLayer !== undefined ? pass(scene, camera, {
       colorSpace: THREE.LinearSRGBColorSpace,
     }) : undefined
-    if (particlesPass) {
+    if (particlesPass && particlesLayer !== undefined) {
       const particlesLayers = new THREE.Layers()
       particlesLayers.mask = 0
       particlesLayers.enable(particlesLayer)
@@ -173,11 +202,15 @@ export function WebGPUPostFX({
     const testingNormal = asType<boolean>(false)
     const testingAoNormal = asType<boolean>(false)
 
-    const needsNormal = testingNormal || ((aoAllowed || ssgiAllowed) && !aoScenePass) || ssrAllowed || dofAllowed
+    const needsNormal = testingNormal || ((aoAllowed || ssgiAllowed) && !aoScenePass) || (ssrAllowed && !ssrScenePass) || dofAllowed
     const aoNeedsNormal = testingAoNormal || ((aoAllowed || ssgiAllowed) && !!aoScenePass)
+    const ssrNeedsNormal = asType<boolean>(true) && ssrAllowed && !!ssrScenePass
     const needsEmissive = asType<boolean>(false) && bloomAllowed
-    const needsMetalness = asType<boolean>(true) && ssrAllowed
-    const needsRoughness = asType<boolean>(true) && ssrAllowed
+    const needsMetalness = asType<boolean>(true) && ssrAllowed && !ssrScenePass
+    const ssrNeedsMetalness = asType<boolean>(true) && ssrAllowed && !!ssrScenePass
+    const needsRoughness = asType<boolean>(true) && ssrAllowed && !ssrScenePass
+    const ssrNeedsRoughness = asType<boolean>(true) && ssrAllowed && !!ssrScenePass
+
 
     if (needsNormal || needsEmissive || needsMetalness || needsRoughness) {
       scenePass.setMRT(
@@ -210,6 +243,23 @@ export function WebGPUPostFX({
       )
     }
 
+    if (ssrScenePass && (ssrNeedsNormal || ssrNeedsMetalness || ssrNeedsRoughness)) {
+      ssrScenePass.setMRT(
+        mrt({
+          output,
+          ...ssrNeedsNormal ? {
+            normal: normalView,
+          } : {},
+          ...ssrNeedsMetalness ? {
+            metalness,
+          } : {},
+          ...ssrNeedsRoughness ? {
+            roughness,
+          } : {},
+        }),
+      )
+    }
+
     let colorNode: THREE.Node<'vec4'> = scenePass.getTextureNode('output')
 
     if (asType<boolean>(false) && particlesPass) {
@@ -225,7 +275,7 @@ export function WebGPUPostFX({
       colorNode = aoPassNormal
     } else {
       if (aoAllowed || ssgiAllowed) {
-        const pass = aoScenePass ? aoScenePass : scenePass
+        const pass = aoScenePass ?? scenePass
         const scenePassDepth = pass.getTextureNode('depth')
         const scenePassNormal = pass.getTextureNode('normal')
 
@@ -296,10 +346,11 @@ export function WebGPUPostFX({
       }
 
       if (ssrAllowed) {
-        const scenePassDepth = scenePass.getTextureNode('depth')
-        const scenePassNormal = scenePass.getTextureNode('normal')
-        const scenePassMetalness = scenePass.getTextureNode('metalness')
-        const scenePassRoughness = scenePass.getTextureNode('roughness')
+        const pass = ssrScenePass ?? scenePass
+        const scenePassDepth = pass.getTextureNode('depth')
+        const scenePassNormal = pass.getTextureNode('normal')
+        const scenePassMetalness = pass.getTextureNode('metalness')
+        const scenePassRoughness = pass.getTextureNode('roughness')
 
         // Create SSR pass
         const ssrPass = ssr(
@@ -412,15 +463,18 @@ export function WebGPUPostFX({
     gl,
     scene,
     camera,
+    cameraMask,
     gpuTier.tier,
     aoAllowed,
     bloomAllowed,
     dofAllowed,
     enableContrast,
     enableVignette,
+    ssrExcludeLayersArray,
+    ssrIncludeLayersArray,
   ])
 
-  // Take over rendering so R3F doesn't also do its normal gl.render(scene, camera).
+  // Take over rendering (renderPriority > 0) so R3F doesn't also do its normal gl.render(scene, camera).
   useFrame(({ gl }) => {
     if (!gl || !pipeline) {
       return
@@ -428,7 +482,7 @@ export function WebGPUPostFX({
 
     gl.clear()
     pipeline.render()
-  }, 1)
+  }, renderPriority)
 
   return null
 }

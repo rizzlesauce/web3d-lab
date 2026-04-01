@@ -675,6 +675,7 @@ function GroundPlanes({
       {usingInvisibleDepthPlane && (
         <mesh
           geometry={geometry}
+          dispose={null}
           rotation-x={-Math.PI / 2}
           position={[0, y - 0.001, 0]}
           renderOrder={-1}
@@ -684,6 +685,7 @@ function GroundPlanes({
 
       <mesh
         geometry={geometry}
+        dispose={null}
         rotation-x={-Math.PI / 2}
         position={[0, y, 0]}
         renderOrder={0}
@@ -692,6 +694,7 @@ function GroundPlanes({
 
       <mesh
         geometry={geometry}
+        dispose={null}
         rotation-x={-Math.PI / 2}
         position={[0, y + 0.001, 0]}
         receiveShadow

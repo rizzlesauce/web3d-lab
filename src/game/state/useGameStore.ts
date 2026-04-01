@@ -12,6 +12,8 @@ export type GameRefs = {
 type GameState = {
   input: InputState;
   setInput: (input: Updater<InputState>) => void;
+  firstFrameRendered: boolean;
+  setFirstFrameRendered: (value: boolean) => void;
   initialFramesRendered: boolean;
   setInitialFramesRendered: (value: boolean) => void;
   paused: boolean;
@@ -22,6 +24,8 @@ type GameState = {
   setHdrPath: (path: string | undefined) => void;
   scenePass?: THREE.PassNode;
   setScenePass: (pass: THREE.PassNode | undefined) => void;
+  renderer?: THREE.Renderer;
+  setRenderer: (renderer: THREE.Renderer | undefined) => void;
 };
 
 export const useGameStore = create<GameState>(set => ({
@@ -31,6 +35,8 @@ export const useGameStore = create<GameState>(set => ({
       ? inputOrUpdater(s.input)
       : inputOrUpdater
   })),
+  firstFrameRendered: false,
+  setFirstFrameRendered: value => set({ firstFrameRendered: value }),
   initialFramesRendered: false,
   setInitialFramesRendered: value => set({ initialFramesRendered: value }),
   paused: false,
@@ -41,4 +47,6 @@ export const useGameStore = create<GameState>(set => ({
   setHdrPath: (path) => set({ hdrPath: path }),
   scenePass: undefined,
   setScenePass: (pass) => set({ scenePass: pass }),
+  renderer: undefined,
+  setRenderer: (renderer) => set({ renderer }),
 }));

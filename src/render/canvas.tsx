@@ -1,7 +1,7 @@
 import { FlyControls, OrbitControls, Stats, useProgress } from "@react-three/drei";
-import { Canvas, type Dpr } from "@react-three/fiber";
+import { Canvas, useFrame, useThree, type Dpr } from "@react-three/fiber";
 import type { DefaultGLProps } from "@react-three/fiber/dist/declarations/src/core/renderer";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { WebGPURendererParameters } from "three/src/renderers/webgpu/WebGPURenderer.js";
 import * as THREE from "three/webgpu";
 import { backgroundRotation, rotatingSceneForBackgroundRotation } from "../game/scenes/SandboxScene";
@@ -9,6 +9,37 @@ import { useGameStore } from "../game/state/useGameStore";
 import { rotateY } from "../game/utility/transforms";
 import { asType } from "../game/utility/types";
 import { useGpuTier } from "../game/utility/useGpuTier";
+
+function GameCanvasGlobal() {
+  const gl = useThree((s) => s.gl)
+  const setRenderer = useGameStore(s => s.setRenderer);
+  const setFirstFrameRendered = useGameStore(state => state.setFirstFrameRendered);
+  const setInitialFramesRendered = useGameStore(state => state.setInitialFramesRendered);
+
+  const frameRef = useRef(0);
+
+  useLayoutEffect(() => {
+    setRenderer(gl as unknown as THREE.Renderer);
+    console.log("Setting renderer:", gl);
+    frameRef.current = 0;
+    setFirstFrameRendered(false);
+    setInitialFramesRendered(false);
+  }, [gl, setRenderer]);
+
+  useFrame(() => {
+    if (frameRef.current === 0) {
+      console.log("First frame rendered");
+      setFirstFrameRendered(true);
+    } else if (frameRef.current === 2) {
+      console.log("Initial frames rendered");
+      setInitialFramesRendered(true);
+    }
+
+    frameRef.current += 1;
+  })
+
+  return null;
+}
 
 type GameCanvasProps = {
   forceWebGL?: boolean;
@@ -19,19 +50,26 @@ export function GameCanvas({
   forceWebGL = false,
   children,
 }: GameCanvasProps) {
+  const renderer = useGameStore(state => state.renderer);
   const hdrPath = useGameStore(state => state.hdrPath);
   const sprint = useGameStore(state => state.input.sprint);
   const initialFramesRendered = useGameStore(state => state.initialFramesRendered);
-  const setInitialFramesRendered = useGameStore(state => state.setInitialFramesRendered);
   const paused = useGameStore(state => state.paused);
   const togglePaused = useGameStore(state => state.togglePaused);
   const gpuTier = useGpuTier();
-  const { progress: loadingProgress } = useProgress();
+  const loadingProgress = useProgress();
 
   const [dragControlsEnabled, setDragControlsEnabled] = useState(true);
   const [statsEnabled, setStatsEnabled] = useState(true);
 
   const elementRef = useRef<HTMLDivElement>(null!);
+
+  const isWebGPU = useMemo(() => {
+    if (!renderer) {
+      return;
+    }
+    return asType<boolean>((renderer as THREE.WebGPURenderer).isWebGPURenderer ?? false);
+  }, [renderer]);
 
   const dpr: Dpr = useMemo(() => {
     if (asType<boolean>(false) && gpuTier.tier >= 3) {
@@ -64,7 +102,6 @@ export function GameCanvas({
       try {
         console.log("Creating WebGPU renderer with props:", props, 'overrides:', { samples, alpha, forceWebGL, powerPreference });
 
-        setInitialFramesRendered(false);
         const renderer = new THREE.WebGPURenderer({
           ...props as WebGPURendererParameters,
           antialias: samples > 1,
@@ -138,7 +175,7 @@ export function GameCanvas({
             }
           }}
         >
-          {(loadingProgress < 100 || !initialFramesRendered) && (
+          {!initialFramesRendered && (
             /* center the loading text */
             <div
               style={{
@@ -149,7 +186,7 @@ export function GameCanvas({
                 height: "100%",
               }}
             >
-              Loading... {Math.min(loadingProgress, 99).toFixed(0)}% [Tier {gpuTier.tier}]
+              Loading... {Math.min(loadingProgress.progress, 99).toFixed(0)}% [Tier {gpuTier.tier}] {renderer ? `(${isWebGPU ? "WebGPU" : "WebGL"})` : ""}
             </div>
           )}
         </div>
@@ -173,7 +210,7 @@ export function GameCanvas({
         dpr={dpr}
         style={{
           ...(!hdrPath && { background: 'gray' }),
-          visibility: loadingProgress < 100 || !initialFramesRendered ? "hidden" : "visible",
+          visibility: !initialFramesRendered ? "hidden" : "visible",
         }}
         flat
         gl={createRenderer}
@@ -184,6 +221,8 @@ export function GameCanvas({
           position: cameraPos,
         }}
       >
+        <GameCanvasGlobal />
+
         {/* Camera controls */}
         {asType<boolean>(true) || gpuTier.isMobile ? (
           <OrbitControls
