@@ -20,17 +20,20 @@ function GameCanvasGlobal() {
 
   useLayoutEffect(() => {
     setRenderer(gl as unknown as THREE.Renderer);
-    console.log("Setting renderer:", gl);
+    console.debug("Setting renderer:", gl);
     frameRef.current = 0;
     setFirstFrameRendered(false);
     setInitialFramesRendered(false);
+    return () => {
+      setRenderer(undefined);
+    }
   }, [gl, setRenderer]);
 
   useFrame(() => {
     if (frameRef.current === 0) {
       console.log("First frame rendered");
       setFirstFrameRendered(true);
-    } else if (frameRef.current === 2) {
+    } else if (frameRef.current === 3) {
       console.log("Initial frames rendered");
       setInitialFramesRendered(true);
     }
@@ -100,7 +103,7 @@ export function GameCanvas({
 
     while (true) {
       try {
-        console.log("Creating WebGPU renderer with props:", props, 'overrides:', { samples, alpha, forceWebGL, powerPreference });
+        console.debug("Creating WebGPU renderer with props:", props, 'overrides:', { samples, alpha, forceWebGL, powerPreference });
 
         const renderer = new THREE.WebGPURenderer({
           ...props as WebGPURendererParameters,
