@@ -310,11 +310,9 @@ function useSeamPaddedPanoramaTexture(
       );
     }
 
-    if (maxTextureWidth === undefined) {
-      maxTextureWidth = srcWidth;
-    }
+    const maxTextureWidthResolved = maxTextureWidth ?? srcWidth;
 
-    if (maxTextureWidth < 3) {
+    if (maxTextureWidthResolved < 3) {
       throw new Error("HdriGroundPlane: maxTextureWidth must be at least 3.");
     }
 
@@ -331,10 +329,10 @@ function useSeamPaddedPanoramaTexture(
       paddingPx ?? Math.min(64, Math.max(8, Math.ceil(srcWidth * 0.002)));
 
     // Clamp padding so there is always at least 1 center texel.
-    const P = Math.max(0, Math.min(desiredPadding, Math.floor((maxTextureWidth - 1) / 2)));
+    const P = Math.max(0, Math.min(desiredPadding, Math.floor((maxTextureWidthResolved - 1) / 2)));
 
     // Width available for the center panorama after padding.
-    const centerWidth = Math.max(1, Math.min(srcWidth, maxTextureWidth - 2 * P));
+    const centerWidth = Math.max(1, Math.min(srcWidth, maxTextureWidthResolved - 2 * P));
     const paddedWidth = centerWidth + 2 * P;
 
     let resizedCenterData: Uint8Array | Uint16Array | Float32Array;
@@ -445,7 +443,11 @@ function useSeamPaddedPanoramaTexture(
       uScale,
       uBias,
     };
-  }, [sourceTexture, maxTextureWidth, paddingPx]);
+  }, [
+    sourceTexture,
+    maxTextureWidth,
+    paddingPx,
+  ]);
 }
 
 function useGroundMaterials({
@@ -485,24 +487,37 @@ function useGroundMaterials({
   displacementScale?: number;
   displacementTiling?: number;
 }): GroundMaterials {
-  return useMemo(() => {
-    hdrTexture.colorSpace = THREE.LinearSRGBColorSpace;
-    hdrTexture.wrapS = THREE.ClampToEdgeWrapping;
-    hdrTexture.wrapT = THREE.ClampToEdgeWrapping;
-    hdrTexture.generateMipmaps = false;
-    hdrTexture.minFilter = THREE.LinearFilter;
-    hdrTexture.magFilter = THREE.LinearFilter;
-    hdrTexture.needsUpdate = true;
+  const preparedHdrTexture = useMemo(() => {
+    const texture = hdrTexture.clone();
+    texture.colorSpace = THREE.LinearSRGBColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.generateMipmaps = false;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.needsUpdate = true;
+    return texture;
+  }, [hdrTexture]);
 
-    if (noiseTexture) {
-      noiseTexture.colorSpace = THREE.NoColorSpace;
-      noiseTexture.wrapS = THREE.RepeatWrapping;
-      noiseTexture.wrapT = THREE.RepeatWrapping;
-      noiseTexture.minFilter = THREE.LinearMipmapLinearFilter;
-      noiseTexture.magFilter = THREE.LinearFilter;
-      noiseTexture.needsUpdate = true;
+  const preparedNoiseTexture = useMemo(() => {
+    if (!noiseTexture) {
+      return undefined;
     }
 
+    const texture = noiseTexture.clone();
+    texture.colorSpace = THREE.NoColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.needsUpdate = true;
+    return texture;
+  }, [noiseTexture]);
+
+  useDisposeTexture(preparedHdrTexture);
+  useOptionalDisposeTexture(preparedNoiseTexture);
+
+  return useMemo(() => {
     const uRadius = uniform(actualRadius);
     const uFadeWidth = uniform(fadeWidth);
     const uProjectionHeight = uniform(projectionHeight);
@@ -516,11 +531,11 @@ function useGroundMaterials({
     const uEnvUScale = uniform(envUScale);
     const uEnvUBias = uniform(envUBias);
 
-    const uEnvMap = uniformTexture(hdrTexture);
+    const uEnvMap = uniformTexture(preparedHdrTexture);
 
-    const displacedLocalPosition = noiseTexture
+    const displacedLocalPosition = preparedNoiseTexture
       ? (() => {
-          const uDispMap = uniformTexture(noiseTexture);
+          const uDispMap = uniformTexture(preparedNoiseTexture);
           const uDispScale = uniform(displacementScale);
           const uDispTiling = uniform(displacementTiling);
 
@@ -613,7 +628,7 @@ function useGroundMaterials({
       depthMaterial,
     };
   }, [
-    hdrTexture,
+    preparedHdrTexture,
     envUScale,
     envUBias,
     actualRadius,
@@ -627,7 +642,7 @@ function useGroundMaterials({
     seamOffset,
     shadowOpacity,
     usingInvisibleDepthPlane,
-    noiseTexture,
+    preparedNoiseTexture,
     displacementScale,
     displacementTiling,
   ]);
@@ -644,11 +659,27 @@ function useDisposeMaterials({
       shadowMaterial.dispose();
       depthMaterial.dispose();
     };
-  }, [visibleMaterial, shadowMaterial, depthMaterial]);
+  }, [
+    visibleMaterial,
+    shadowMaterial,
+    depthMaterial,
+  ]);
 }
 
 function useDisposeTexture(textureToDispose: THREE.Texture) {
   useEffect(() => {
+    return () => {
+      textureToDispose.dispose();
+    };
+  }, [textureToDispose]);
+}
+
+function useOptionalDisposeTexture(textureToDispose?: THREE.Texture) {
+  useEffect(() => {
+    if (!textureToDispose) {
+      return;
+    }
+
     return () => {
       textureToDispose.dispose();
     };

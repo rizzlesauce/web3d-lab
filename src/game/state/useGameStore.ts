@@ -1,5 +1,6 @@
 import * as THREE from "three/webgpu";
 import { create } from "zustand";
+import type { Renderer } from "../../render/render";
 import { createInput, type InputState } from "../systems/input";
 
 type Updater<T> = T | ((prev: T) => T);
@@ -24,8 +25,10 @@ type GameState = {
   setHdrPath: (path: string | undefined) => void;
   scenePass?: THREE.PassNode;
   setScenePass: (pass: THREE.PassNode | undefined) => void;
-  renderer?: THREE.Renderer;
-  setRenderer: (renderer: THREE.Renderer | undefined) => void;
+  renderer?: Renderer;
+  setRenderer: (renderer: Renderer | undefined) => void;
+  shadowsType?: THREE.ShadowMapType;
+  setShadowsType: (type: THREE.ShadowMapType | undefined) => void;
 };
 
 export const useGameStore = create<GameState>(set => ({
@@ -49,4 +52,6 @@ export const useGameStore = create<GameState>(set => ({
   setScenePass: (pass) => set({ scenePass: pass }),
   renderer: undefined,
   setRenderer: (renderer) => set({ renderer }),
+  shadowsType: THREE.BasicShadowMap,
+  setShadowsType: (type) => set({ shadowsType: type }),
 }));

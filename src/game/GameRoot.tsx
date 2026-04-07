@@ -4,6 +4,7 @@ import { SandboxScene } from './scenes/SandboxScene';
 import { useGameStore } from './state/useGameStore';
 import { bindKeyboard } from './systems/input';
 import { makeFixedStep, stepFixed } from './systems/time';
+import { asType } from './utility/types';
 
 export function GameRoot() {
   const paused = useGameStore((s) => s.paused);
@@ -22,7 +23,7 @@ export function GameRoot() {
         return;
     }
 
-    stepFixed(fs, frameDt, (_dt) => {
+    stepFixed(fs, frameDt, () => {
       // tick systems here in a stable order
       // playerController(dt)
       // cameraRig(dt)
@@ -42,7 +43,7 @@ export function GameRoot() {
         if (!paused && !clock.running) {
           clock.start();
           // If using frameloop="demand", force a render
-          if (false) {
+          if (asType<boolean>(false)) {
             invalidate();
           }
         }

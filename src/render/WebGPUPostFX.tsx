@@ -1,8 +1,6 @@
 import { useFrame, useThree } from '@react-three/fiber'
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
-import type { WebGPURenderer } from 'three/webgpu'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three/webgpu'
-import { RenderPipeline } from 'three/webgpu'
 
 import {
   convertToTexture,
@@ -31,6 +29,7 @@ import { smaa } from 'three/examples/jsm/tsl/display/SMAANode.js'
 import { ssgi } from 'three/examples/jsm/tsl/display/SSGINode.js'
 import { ssr } from 'three/examples/jsm/tsl/display/SSRNode.js'
 import { useGameStore } from '../game/state/useGameStore'
+import { normalizeLayerList } from '../game/utility/layers'
 import { asType } from '../game/utility/types'
 
 type GpuTierLike = {
@@ -70,6 +69,10 @@ function toTextureNode(node: THREE.Node<'vec4'>): THREE.TextureNode {
   return convertToTexture(node)
 }
 
+function asVec4Node(node: THREE.Node | object): THREE.Node<'vec4'> {
+  return node as unknown as THREE.Node<'vec4'>
+}
+
 export function WebGPUPostFX({
   gpuTier,
   allowingHigherTier1Quality = false,
@@ -91,16 +94,13 @@ export function WebGPUPostFX({
   renderPriority = 1,
   cameraMask = 0,
 }: WebGPUPostFXProps) {
-  const gl = useThree((s) => s.gl) as unknown as WebGPURenderer
+  const gl = useThree((s) => s.gl) as unknown as THREE.Renderer
   const scene = useThree((s) => s.scene)
   const camera = useThree((s) => s.camera)
   const setScenePass = useGameStore((s) => s.setScenePass)
+  const pipelineRef = useRef<THREE.RenderPipeline | undefined>(undefined)
 
-  const [pipeline, setPipeline] = useState<RenderPipeline | undefined>()
-
-  const aoAllowed =
-    enableAO &&
-    (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1))
+  const aoAllowed = enableAO
 
   const ssgiAllowed =
     enableSSGI &&
@@ -108,16 +108,31 @@ export function WebGPUPostFX({
 
   const bloomAllowed =
     enableBloom &&
-    (gpuTier.tier >= 2 || (true && allowingHigherTier1Quality && gpuTier.tier >= 1))
+    (gpuTier.tier >= 2 || (asType<boolean>(true) && allowingHigherTier1Quality && gpuTier.tier >= 1))
 
   const dofAllowed =
     enableDOF &&
-    (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1))
+    (gpuTier.tier >= 2 || (asType<boolean>(false) && allowingHigherTier1Quality && gpuTier.tier >= 1))
 
   const ssrAllowed = asType<boolean>(true) && enableSSR && gpuTier.tier >= 1
 
-  const ssrExcludeLayersArray = useMemo(() => (Array.isArray(ssrExcludeLayers) ? ssrExcludeLayers : [ssrExcludeLayers]), [ssrExcludeLayers])
-  const ssrIncludeLayersArray = useMemo(() => (Array.isArray(ssrIncludeLayers) ? ssrIncludeLayers : [ssrIncludeLayers]), [ssrIncludeLayers])
+  const ssrExcludeLayersKey = useMemo(
+    () => normalizeLayerList(ssrExcludeLayers).join(','),
+    [ssrExcludeLayers],
+  )
+  const ssrIncludeLayersKey = useMemo(
+    () => normalizeLayerList(ssrIncludeLayers).join(','),
+    [ssrIncludeLayers],
+  )
+
+  const ssrExcludeLayersArray = useMemo(
+    () => ssrExcludeLayersKey ? ssrExcludeLayersKey.split(',').map(layer => Number(layer)) : [],
+    [ssrExcludeLayersKey],
+  )
+  const ssrIncludeLayersArray = useMemo(
+    () => ssrIncludeLayersKey ? ssrIncludeLayersKey.split(',').map(layer => Number(layer)) : [],
+    [ssrIncludeLayersKey],
+  )
 
   /**
    * Keep the AO exclusion layer in sync with userData.cannotReceiveAO.
@@ -143,9 +158,7 @@ export function WebGPUPostFX({
   ])
 
   useLayoutEffect(() => {
-    if (!gl || !scene || !camera || !gl.isWebGPURenderer) {
-      setScenePass(undefined)
-      setPipeline(undefined)
+    if (!gl || !scene || !camera) {
       return
     }
 
@@ -164,7 +177,7 @@ export function WebGPUPostFX({
     }
     scenePass.setLayers(mainLayers)
 
-    const renderPipeline = new RenderPipeline(gl)
+    const renderPipeline = new THREE.RenderPipeline(gl)
 
     // AO scene pass: same scene, but excluding objects on the aoExcludeLayer
     const aoScenePass = aoAllowed ? pass(scene, camera) : undefined
@@ -334,7 +347,7 @@ export function WebGPUPostFX({
           )
           denoisePass.radius.value = 2
 
-          colorNode = denoisePass.toVec4()
+          colorNode = asVec4Node(denoisePass)
         }
       }
 
@@ -393,15 +406,17 @@ export function WebGPUPostFX({
           0.4,  // bokehScale
         )
 
-        colorNode = dofPass.toVec4()
+        colorNode = asVec4Node(dofPass)
       }
 
       if (enableFxaa) {
-        colorNode = fxaa(toTextureNode(colorNode)).toVec4()
+        const fxaaPass = fxaa(toTextureNode(colorNode))
+        colorNode = asVec4Node(fxaaPass)
       }
 
       if (enableSmaa) {
-        colorNode = smaa(toTextureNode(colorNode)).toVec4()
+        const smaaPass = smaa(toTextureNode(colorNode))
+        colorNode = asVec4Node(smaaPass)
       }
 
       // ACES Filmic tone mapping
@@ -453,11 +468,15 @@ export function WebGPUPostFX({
     renderPipeline.outputNode = colorNode
     renderPipeline.outputColorTransform = false
 
-    setPipeline(renderPipeline)
+    pipelineRef.current = renderPipeline
     setScenePass(scenePass)
 
     return () => {
-      pipeline?.dispose()
+      if (pipelineRef.current === renderPipeline) {
+        pipelineRef.current = undefined
+      }
+      setScenePass(undefined)
+      renderPipeline.dispose()
     }
   }, [
     gl,
@@ -466,16 +485,27 @@ export function WebGPUPostFX({
     cameraMask,
     gpuTier.tier,
     aoAllowed,
+    aoExcludeLayer,
     bloomAllowed,
     dofAllowed,
+    ssgiAllowed,
+    ssrAllowed,
+    enableDenoise,
     enableContrast,
     enableVignette,
+    enableFxaa,
+    enableSmaa,
+    particlesLayer,
+    resolutionScale,
     ssrExcludeLayersArray,
     ssrIncludeLayersArray,
+    setScenePass,
   ])
 
   // Take over rendering (renderPriority > 0) so R3F doesn't also do its normal gl.render(scene, camera).
   useFrame(({ gl }) => {
+    const pipeline = pipelineRef.current
+
     if (!gl || !pipeline) {
       return
     }

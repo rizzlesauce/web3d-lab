@@ -1,6 +1,6 @@
 import { useAnimations, useGLTF } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three/webgpu";
 import { asType } from "../utility/types";
 
@@ -83,6 +83,14 @@ export function Model({
   const boxHelpersRef = useRef<THREE.BoxHelper[]>([]);
   const sphereHelpersRef = useRef<THREE.Mesh[]>([]);
 
+  const alphaBlendMapsKey = Array.from(alphaBlendMaps).sort().join(',');
+  const alphaBlendMapsStable = useMemo(
+    () => new Set<string>(alphaBlendMapsKey === '' ? [] : alphaBlendMapsKey.split(',').filter(s => s)),
+    [
+      alphaBlendMapsKey,
+    ],
+  );
+
   useEffect(() => {
     const boxHelpers: THREE.BoxHelper[] = [];
     const sphereHelpers: THREE.Mesh[] = [];
@@ -117,7 +125,12 @@ export function Model({
       });
       sphereHelpersRef.current = [];
     };
-  }, [scene, meshesNeedingPerFrameBoundaryUpdate, debug, debugBoundingBoxes]);
+  }, [
+    scene,
+    meshesNeedingPerFrameBoundaryUpdate,
+    debug,
+    debugBoundingBoxes,
+  ]);
 
   useFrame(() => {
     const boxHelpers = boxHelpersRef.current;
@@ -168,7 +181,7 @@ export function Model({
 
       const { userData: objUserData } = obj;
 
-      if (typeof objUserData.frustomCulled === 'boolean') {
+      if (typeof objUserData.frustumCulled === 'boolean') {
         if (asType<boolean>(true) || debug) {
           console.log("userData.frustumCulled:", objUserData.frustumCulled, objPath);
         }
@@ -197,7 +210,7 @@ export function Model({
             return;
           }
 
-          let materialPath = `${objPath}:${mat.name}`;
+          const materialPath = `${objPath}:${mat.name}`;
           let materialMapName = '';
 
           const { userData } = mat;
@@ -300,7 +313,7 @@ export function Model({
             }
           }
 
-          if (alphaBlendMaps.has(materialMapName)) {
+          if (alphaBlendMapsStable.has(materialMapName)) {
             if (asType<boolean>(true) || debug) {
               console.log("Material is in alphaBlendMaps", materialPath);
             }
@@ -444,6 +457,7 @@ export function Model({
       }
     });
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMeshesNeedingPerFrameBoundaryUpdate(newMeshesNeedingPerFrameBoundaryUpdate);
 
     Object.values(actions)[0]?.play();
@@ -451,6 +465,12 @@ export function Model({
     scene,
     updatingSkinnedMeshBoundingSphere,
     skinnedMeshFrustumCulledOverride,
+    debug,
+    actions,
+    modelPath,
+    alphaBlendMapsStable,
+    alphaToCoverageClip,
+    alphaToCoverageDither,
   ]);
 
   return (

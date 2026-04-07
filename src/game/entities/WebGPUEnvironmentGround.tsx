@@ -18,6 +18,14 @@ export type WebGPUEnvironmentProps = Omit<DreiEnvironmentProps, "ground"> & {
   ground?: GroundOptions;
 };
 
+type SceneEnvironmentProps = THREE.Scene & {
+  backgroundBlurriness?: number;
+  backgroundIntensity?: number;
+  backgroundRotation?: THREE.Euler;
+  environmentIntensity?: number;
+  environmentRotation?: THREE.Euler;
+};
+
 function isEulerLike(
   value: THREE.Euler | [number, number, number] | undefined
 ): value is THREE.Euler {
@@ -54,14 +62,16 @@ function setSceneEnvProps(
     environmentRotation?: THREE.Euler | [number, number, number];
   }
 ) {
+  const sceneWithEnvironmentProps = scene as SceneEnvironmentProps;
+
   const previous = {
     background: scene.background,
     environment: scene.environment,
-    backgroundBlurriness: (scene as any).backgroundBlurriness,
-    backgroundIntensity: (scene as any).backgroundIntensity,
-    backgroundRotation: (scene as any).backgroundRotation?.clone?.(),
-    environmentIntensity: (scene as any).environmentIntensity,
-    environmentRotation: (scene as any).environmentRotation?.clone?.(),
+    backgroundBlurriness: sceneWithEnvironmentProps.backgroundBlurriness,
+    backgroundIntensity: sceneWithEnvironmentProps.backgroundIntensity,
+    backgroundRotation: sceneWithEnvironmentProps.backgroundRotation?.clone(),
+    environmentIntensity: sceneWithEnvironmentProps.environmentIntensity,
+    environmentRotation: sceneWithEnvironmentProps.environmentRotation?.clone(),
   };
 
   if (background !== "only") {
@@ -75,29 +85,29 @@ function setSceneEnvProps(
   }
 
   if (props.backgroundBlurriness !== undefined) {
-    (scene as any).backgroundBlurriness = props.backgroundBlurriness;
+    sceneWithEnvironmentProps.backgroundBlurriness = props.backgroundBlurriness;
   }
   if (props.backgroundIntensity !== undefined) {
-    (scene as any).backgroundIntensity = props.backgroundIntensity;
+    sceneWithEnvironmentProps.backgroundIntensity = props.backgroundIntensity;
   }
   if (props.backgroundRotation !== undefined) {
-    (scene as any).backgroundRotation = toEuler(props.backgroundRotation);
+    sceneWithEnvironmentProps.backgroundRotation = toEuler(props.backgroundRotation);
   }
   if (props.environmentIntensity !== undefined) {
-    (scene as any).environmentIntensity = props.environmentIntensity;
+    sceneWithEnvironmentProps.environmentIntensity = props.environmentIntensity;
   }
   if (props.environmentRotation !== undefined) {
-    (scene as any).environmentRotation = toEuler(props.environmentRotation);
+    sceneWithEnvironmentProps.environmentRotation = toEuler(props.environmentRotation);
   }
 
   return () => {
     scene.background = previous.background;
     scene.environment = previous.environment;
-    (scene as any).backgroundBlurriness = previous.backgroundBlurriness;
-    (scene as any).backgroundIntensity = previous.backgroundIntensity;
-    (scene as any).backgroundRotation = previous.backgroundRotation;
-    (scene as any).environmentIntensity = previous.environmentIntensity;
-    (scene as any).environmentRotation = previous.environmentRotation;
+    sceneWithEnvironmentProps.backgroundBlurriness = previous.backgroundBlurriness;
+    sceneWithEnvironmentProps.backgroundIntensity = previous.backgroundIntensity;
+    sceneWithEnvironmentProps.backgroundRotation = previous.backgroundRotation;
+    sceneWithEnvironmentProps.environmentIntensity = previous.environmentIntensity;
+    sceneWithEnvironmentProps.environmentRotation = previous.environmentRotation;
   };
 }
 
@@ -116,16 +126,22 @@ function WebGPUGroundEnvironment(props: WebGPUEnvironmentProps) {
     backgroundRotation,
     environmentIntensity,
     environmentRotation,
-    near, // ignored here, preserved only for prop compatibility
-    far, // ignored here
-    resolution, // ignored for load path; ground.resolution is used for mesh tessellation
-    frames, // ignored here
-    children, // ignored here; portal/cube-camera path is not WebGPU-safe in Drei yet
+    near: _near, // ignored here, preserved only for prop compatibility
+    far: _far, // ignored here
+    resolution: _resolution, // ignored for load path; ground.resolution is used for mesh tessellation
+    frames: _frames, // ignored here
+    children: _children, // ignored here; portal/cube-camera path is not WebGPU-safe in Drei yet
     ...rest
   } = props;
 
+  void _near;
+  void _far;
+  void _resolution;
+  void _frames;
+  void _children;
+
   const defaultScene = useThree((state) => state.scene);
-  const scene = resolveScene(sceneProp as any, defaultScene);
+  const scene = resolveScene(sceneProp, defaultScene);
 
   const loadedTexture = useEnvironment(
     map
@@ -152,7 +168,6 @@ function WebGPUGroundEnvironment(props: WebGPUEnvironmentProps) {
 
   const height = (groundOptions.height ?? 15) * 3.9;
   const radius = (groundOptions.radius ?? 60) * 1.0;
-  const scale = (groundOptions.scale ?? 1000) * 1;
   const meshResolution = groundOptions.resolution ?? 128;
 
   const bgRotation = React.useMemo(
@@ -187,7 +202,6 @@ function WebGPUGroundEnvironment(props: WebGPUEnvironmentProps) {
     height,
     radius,
     meshResolution,
-    scale,
     bgRotation,
   ]);
 

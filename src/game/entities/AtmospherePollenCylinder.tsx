@@ -1,5 +1,5 @@
 import { useFrame, useLoader, useThree } from "@react-three/fiber";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   attribute,
   depth,
@@ -39,17 +39,132 @@ type AtmospherePollenCylinderProps = {
 
 const timer = new THREE.Timer();
 
-type PollenCore = {
-  count: number;
-  sprite: THREE.Texture;
+type PollenGeometryState = {
   geometry: THREE.PlaneGeometry;
   alphaAttr: THREE.InstancedBufferAttribute;
   colorAttr: THREE.InstancedBufferAttribute;
   instanceAlpha: Float32Array;
   instanceColor: Float32Array;
-  meshRef: React.MutableRefObject<THREE.InstancedMesh | null>;
-  cubeMeshRef: React.MutableRefObject<THREE.InstancedMesh | null>;
 };
+
+type PollenParticleState = {
+  centers: Float32Array;
+  velocities: Float32Array;
+  ages: Float32Array;
+  spawnAges: Float32Array;
+  lifetimes: Float32Array;
+  seeds: Float32Array;
+  swayAmp: Float32Array;
+  swayFreq: Float32Array;
+  scales: Float32Array;
+  alphas: Float32Array;
+  brightness: Float32Array;
+};
+
+type PollenCore = {
+  count: number;
+  sprite: THREE.Texture;
+  geometry: THREE.PlaneGeometry;
+  setMeshRef: (mesh: THREE.InstancedMesh | null) => void;
+  setCubeMeshRef: (mesh: THREE.InstancedMesh | null) => void;
+};
+
+function createPollenGeometryState(count: number): PollenGeometryState {
+  const geometry = new THREE.PlaneGeometry(2, 2, 1, 1);
+
+  const instanceAlpha = new Float32Array(count);
+  const instanceColor = new Float32Array(count * 3);
+
+  const alphaAttr = new THREE.InstancedBufferAttribute(instanceAlpha, 1);
+  alphaAttr.setUsage(THREE.DynamicDrawUsage);
+
+  const colorAttr = new THREE.InstancedBufferAttribute(instanceColor, 3);
+  colorAttr.setUsage(THREE.DynamicDrawUsage);
+
+  geometry.setAttribute("instanceAlpha", alphaAttr);
+  geometry.setAttribute("instanceColor", colorAttr);
+
+  return {
+    geometry,
+    alphaAttr,
+    colorAttr,
+    instanceAlpha,
+    instanceColor,
+  };
+}
+
+function createPollenParticleState(count: number): PollenParticleState {
+  return {
+    centers: new Float32Array(count * 3),
+    velocities: new Float32Array(count * 3),
+    ages: new Float32Array(count),
+    spawnAges: new Float32Array(count),
+    lifetimes: new Float32Array(count),
+    seeds: new Float32Array(count),
+    swayAmp: new Float32Array(count),
+    swayFreq: new Float32Array(count),
+    scales: new Float32Array(count),
+    alphas: new Float32Array(count),
+    brightness: new Float32Array(count),
+  };
+}
+
+function randomPointInCylinder(
+  centerX: number,
+  centerZ: number,
+  radius: number,
+  minY: number,
+  maxY: number
+) {
+  const angle = Math.random() * Math.PI * 2;
+  const r = Math.sqrt(Math.random()) * radius;
+
+  return {
+    x: centerX + Math.cos(angle) * r,
+    y: THREE.MathUtils.randFloat(minY, maxY),
+    z: centerZ + Math.sin(angle) * r,
+  };
+}
+
+function spawnParticle(
+  particleState: PollenParticleState,
+  index: number,
+  centerX: number,
+  centerZ: number,
+  radius: number,
+  minY: number,
+  maxY: number,
+  baseWind: [number, number, number],
+  midLife = true
+) {
+  const point = randomPointInCylinder(centerX, centerZ, radius, minY, maxY);
+  const offset = index * 3;
+
+  particleState.centers[offset + 0] = point.x;
+  particleState.centers[offset + 1] = point.y;
+  particleState.centers[offset + 2] = point.z;
+
+  particleState.velocities[offset + 0] =
+    baseWind[0] + THREE.MathUtils.randFloat(-0.02, 0.02);
+  particleState.velocities[offset + 1] =
+    baseWind[1] + THREE.MathUtils.randFloat(-0.03, 0.01);
+  particleState.velocities[offset + 2] =
+    baseWind[2] + THREE.MathUtils.randFloat(-0.02, 0.02);
+
+  particleState.lifetimes[index] = THREE.MathUtils.randFloat(6, 12);
+  particleState.ages[index] = midLife
+    ? THREE.MathUtils.randFloat(0, particleState.lifetimes[index] * 0.7)
+    : 0;
+
+  particleState.spawnAges[index] = 0;
+  particleState.seeds[index] = Math.random() * 1000;
+  particleState.swayAmp[index] = THREE.MathUtils.randFloat(0.02, 0.07);
+  particleState.swayFreq[index] = THREE.MathUtils.randFloat(0.35, 0.9);
+
+  particleState.alphas[index] = 0;
+  particleState.brightness[index] = 1;
+  particleState.scales[index] = 0.01;
+}
 
 function useAtmospherePollenCore({
   count = 260,
@@ -76,15 +191,16 @@ function useAtmospherePollenCore({
 
   const meshRef = useRef<THREE.InstancedMesh | null>(null);
   const cubeMeshRef = useRef<THREE.InstancedMesh | null>(null);
+  const geometryStateRef = useRef<PollenGeometryState | null>(null);
+  const particleStateRef = useRef<PollenParticleState | null>(null);
+  const tempNdcRef = useRef(new THREE.Vector3());
+  const tempToCameraRef = useRef(new THREE.Vector3());
+  const tempCenterRef = useRef(new THREE.Vector3());
+  const worldPosRef = useRef(new THREE.Vector3());
+  const mvPosRef = useRef(new THREE.Vector3());
+  const dummyRef = useRef(new THREE.Object3D());
 
-  const sprite = useLoader(THREE.TextureLoader, texturePath);
-
-  useEffect(() => {
-    sprite.colorSpace = THREE.SRGBColorSpace;
-    sprite.wrapS = THREE.ClampToEdgeWrapping;
-    sprite.wrapT = THREE.ClampToEdgeWrapping;
-    sprite.needsUpdate = true;
-  }, [sprite]);
+  const loadedSprite = useLoader(THREE.TextureLoader, texturePath);
 
   const baseColor = useMemo(() => new THREE.Color(color), [color]);
   const sunlightDir = useMemo(
@@ -92,109 +208,105 @@ function useAtmospherePollenCore({
     [sunlightDirection]
   );
 
-  const quadGeometry = useMemo(() => {
-    const g = new THREE.PlaneGeometry(2, 2, 1, 1);
+  const setMeshRef = useCallback((mesh: THREE.InstancedMesh | null) => {
+    meshRef.current = mesh;
+  }, []);
 
-    const instanceAlpha = new Float32Array(count);
-    const instanceColor = new Float32Array(count * 3);
+  const setCubeMeshRef = useCallback((mesh: THREE.InstancedMesh | null) => {
+    cubeMeshRef.current = mesh;
+  }, []);
 
-    const alphaAttr = new THREE.InstancedBufferAttribute(instanceAlpha, 1);
-    alphaAttr.setUsage(THREE.DynamicDrawUsage);
-
-    const colorAttr = new THREE.InstancedBufferAttribute(instanceColor, 3);
-    colorAttr.setUsage(THREE.DynamicDrawUsage);
-
-    g.setAttribute("instanceAlpha", alphaAttr);
-    g.setAttribute("instanceColor", colorAttr);
-
-    return {
-      geometry: g,
-      instanceAlpha,
-      instanceColor,
-      alphaAttr,
-      colorAttr,
-    };
-  }, [count]);
-
-  const particleState = useMemo(() => {
-    return {
-      centers: new Float32Array(count * 3),
-      velocities: new Float32Array(count * 3),
-      ages: new Float32Array(count),
-      spawnAges: new Float32Array(count),
-      lifetimes: new Float32Array(count),
-      seeds: new Float32Array(count),
-      swayAmp: new Float32Array(count),
-      swayFreq: new Float32Array(count),
-      scales: new Float32Array(count),
-      alphas: new Float32Array(count),
-      brightness: new Float32Array(count),
-    };
-  }, [count]);
-
-  const tempNdc = useMemo(() => new THREE.Vector3(), []);
-  const tempToCamera = useMemo(() => new THREE.Vector3(), []);
-  const tempCenter = useMemo(() => new THREE.Vector3(), []);
-  const worldPos = useMemo(() => new THREE.Vector3(), []);
-  const mvPos = useMemo(() => new THREE.Vector3(), []);
-  const dummy = useMemo(() => new THREE.Object3D(), []);
-
-  function randomPointInCylinder(centerX: number, centerZ: number) {
-    const angle = Math.random() * Math.PI * 2;
-    const r = Math.sqrt(Math.random()) * radius;
+  const renderResources = useMemo(() => {
+    const sprite = loadedSprite.clone();
+    sprite.colorSpace = THREE.SRGBColorSpace;
+    sprite.wrapS = THREE.ClampToEdgeWrapping;
+    sprite.wrapT = THREE.ClampToEdgeWrapping;
+    sprite.needsUpdate = true;
 
     return {
-      x: centerX + Math.cos(angle) * r,
-      y: THREE.MathUtils.randFloat(minY, maxY),
-      z: centerZ + Math.sin(angle) * r,
+      count,
+      sprite,
+      geometryState: createPollenGeometryState(count),
+      particleState: createPollenParticleState(count),
     };
-  }
+  }, [count, loadedSprite]);
 
-  function spawnParticle(i: number, midLife = true) {
-    const centerX = camera.position.x;
-    const centerZ = camera.position.z;
-    const p = randomPointInCylinder(centerX, centerZ);
-    const i3 = i * 3;
-
-    particleState.centers[i3 + 0] = p.x;
-    particleState.centers[i3 + 1] = p.y;
-    particleState.centers[i3 + 2] = p.z;
-
-    particleState.velocities[i3 + 0] =
-      baseWind[0] + THREE.MathUtils.randFloat(-0.02, 0.02);
-    particleState.velocities[i3 + 1] =
-      baseWind[1] + THREE.MathUtils.randFloat(-0.03, 0.01);
-    particleState.velocities[i3 + 2] =
-      baseWind[2] + THREE.MathUtils.randFloat(-0.02, 0.02);
-
-    particleState.lifetimes[i] = THREE.MathUtils.randFloat(6, 12);
-    particleState.ages[i] = midLife
-      ? THREE.MathUtils.randFloat(0, particleState.lifetimes[i] * 0.7)
-      : 0;
-
-    particleState.spawnAges[i] = 0;
-    particleState.seeds[i] = Math.random() * 1000;
-    particleState.swayAmp[i] = THREE.MathUtils.randFloat(0.02, 0.07);
-    particleState.swayFreq[i] = THREE.MathUtils.randFloat(0.35, 0.9);
-
-    particleState.alphas[i] = 0;
-    particleState.brightness[i] = 1;
-    particleState.scales[i] = 0.01;
-  }
+  const core = useMemo(
+    () => ({
+      count: renderResources.count,
+      sprite: renderResources.sprite,
+      geometry: renderResources.geometryState.geometry,
+      setMeshRef,
+      setCubeMeshRef,
+    }),
+    [renderResources, setCubeMeshRef, setMeshRef]
+  );
 
   useEffect(() => {
-    for (let i = 0; i < count; i++) {
-      spawnParticle(i, true);
+    geometryStateRef.current = renderResources.geometryState;
+    particleStateRef.current = renderResources.particleState;
+
+    const geometryState = geometryStateRef.current;
+    const particleState = particleStateRef.current;
+
+    if (!geometryState || !particleState) {
+      return;
     }
 
-    quadGeometry.alphaAttr.needsUpdate = true;
-    quadGeometry.colorAttr.needsUpdate = true;
-  }, [count, quadGeometry.alphaAttr, quadGeometry.colorAttr]);
+    for (let i = 0; i < count; i++) {
+      spawnParticle(
+        particleState,
+        i,
+        camera.position.x,
+        camera.position.z,
+        radius,
+        minY,
+        maxY,
+        baseWind,
+        true
+      );
+    }
+
+    geometryState.alphaAttr.needsUpdate = true;
+    geometryState.colorAttr.needsUpdate = true;
+
+    return () => {
+      if (geometryStateRef.current === geometryState) {
+        geometryStateRef.current = null;
+      }
+      if (particleStateRef.current === particleState) {
+        particleStateRef.current = null;
+      }
+
+      renderResources.sprite.dispose();
+      renderResources.geometryState.geometry.dispose();
+    };
+  }, [
+    baseWind,
+    camera,
+    count,
+    maxY,
+    minY,
+    radius,
+    renderResources,
+  ]);
 
   useFrame((_state, delta) => {
+    const geometryState = geometryStateRef.current;
+    const particleState = particleStateRef.current;
     const mesh = meshRef.current;
     const cubeMesh = cubeMeshRef.current;
-    if (!mesh && !cubeMesh) return;
+
+    if (!geometryState || !particleState || (!mesh && !cubeMesh)) {
+      return;
+    }
+
+    const tempNdc = tempNdcRef.current;
+    const tempToCamera = tempToCameraRef.current;
+    const tempCenter = tempCenterRef.current;
+    const worldPos = worldPosRef.current;
+    const mvPos = mvPosRef.current;
+    const dummy = dummyRef.current;
 
     const dt = Math.min(delta, 1 / 10);
 
@@ -306,7 +418,17 @@ function useAtmospherePollenCore({
         tempNdc.y > 2.0;
 
       if (expired || belowGround || outsideCylinder || wayOffscreen) {
-        spawnParticle(i, true);
+        spawnParticle(
+          particleState,
+          i,
+          camera.position.x,
+          camera.position.z,
+          radius,
+          minY,
+          maxY,
+          baseWind,
+          true
+        );
 
         worldPos.set(
           particleState.centers[i3 + 0],
@@ -346,30 +468,20 @@ function useAtmospherePollenCore({
       if (mesh) mesh.setMatrixAt(i, dummy.matrix);
       if (cubeMesh) cubeMesh.setMatrixAt(i, dummy.matrix);
 
-      quadGeometry.instanceAlpha[i] = particleState.alphas[i];
-      quadGeometry.instanceColor[i3 + 0] = baseColor.r * bright;
-      quadGeometry.instanceColor[i3 + 1] = baseColor.g * bright;
-      quadGeometry.instanceColor[i3 + 2] = baseColor.b * bright;
+      geometryState.instanceAlpha[i] = particleState.alphas[i];
+      geometryState.instanceColor[i3 + 0] = baseColor.r * bright;
+      geometryState.instanceColor[i3 + 1] = baseColor.g * bright;
+      geometryState.instanceColor[i3 + 2] = baseColor.b * bright;
     }
 
     if (mesh) mesh.instanceMatrix.needsUpdate = true;
     if (cubeMesh) cubeMesh.instanceMatrix.needsUpdate = true;
 
-    quadGeometry.alphaAttr.needsUpdate = true;
-    quadGeometry.colorAttr.needsUpdate = true;
+    geometryState.alphaAttr.needsUpdate = true;
+    geometryState.colorAttr.needsUpdate = true;
   });
 
-  return {
-    count,
-    sprite,
-    geometry: quadGeometry.geometry,
-    alphaAttr: quadGeometry.alphaAttr,
-    colorAttr: quadGeometry.colorAttr,
-    instanceAlpha: quadGeometry.instanceAlpha,
-    instanceColor: quadGeometry.instanceColor,
-    meshRef,
-    cubeMeshRef,
-  };
+  return core;
 }
 
 function useAtmospherePollenMaterial(
@@ -377,9 +489,6 @@ function useAtmospherePollenMaterial(
   opacity: number,
   sceneDepthNode?: THREE.TextureNode | null
 ) {
-  const opacityUniformRef =
-    useRef<THREE.UniformNode<"float", number> | null>(null);
-
   const material = useMemo(() => {
     const mat = new THREE.MeshBasicNodeMaterial();
     mat.transparent = true;
@@ -393,8 +502,6 @@ function useAtmospherePollenMaterial(
     const instanceAlpha = attribute<"float">("instanceAlpha");
     const instanceColor = attribute<"vec3">("instanceColor");
     const opacityUniform = uniform(opacity, "float");
-
-    opacityUniformRef.current = opacityUniform;
 
     mat.colorNode = tex.rgb.mul(instanceColor);
 
@@ -421,25 +528,21 @@ function useAtmospherePollenMaterial(
     return mat;
   }, [sprite, opacity, sceneDepthNode]);
 
-  useEffect(() => {
-    if (opacityUniformRef.current) {
-      opacityUniformRef.current.value = opacity;
-    }
-  }, [opacity]);
-
   return material;
 }
 
 export function AtmospherePollenCylinderSingle({
   core,
+  meshRef,
   layer,
   opacity = 0.6,
   sceneDepthNode = null,
 }: {
-  core: ReturnType<typeof useAtmospherePollenCore>
-  layer: number
-  opacity: number
-  sceneDepthNode?: THREE.TextureNode | null
+  core: PollenCore;
+  meshRef: (mesh: THREE.InstancedMesh | null) => void;
+  layer: number;
+  opacity: number;
+  sceneDepthNode?: THREE.TextureNode | null;
 }) {
   const material = useAtmospherePollenMaterial(
     core.sprite,
@@ -455,7 +558,7 @@ export function AtmospherePollenCylinderSingle({
 
   return (
     <instancedMesh
-      ref={core.meshRef}
+      ref={meshRef}
       args={[core.geometry, material, core.count]}
       dispose={null}
       frustumCulled={false}
@@ -503,17 +606,11 @@ export function AtmospherePollenCylinder({
     spawnFadeInTime,
   });
 
-  useEffect(() => {
-    return () => {
-      core.sprite.dispose();
-      core.geometry.dispose();
-    };
-  }, [core]);
-
   return (
     <>
       <AtmospherePollenCylinderSingle
         core={core}
+        meshRef={core.setMeshRef}
         layer={layer}
         opacity={opacity}
         sceneDepthNode={sceneDepthNode}
@@ -522,6 +619,7 @@ export function AtmospherePollenCylinder({
       {layer2 !== undefined && (
         <AtmospherePollenCylinderSingle
           core={core}
+          meshRef={core.setCubeMeshRef}
           layer={layer2}
           opacity={opacity}
           sceneDepthNode={null}

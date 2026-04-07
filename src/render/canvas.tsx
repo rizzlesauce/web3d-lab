@@ -1,41 +1,72 @@
 import { FlyControls, OrbitControls, Stats, useProgress } from "@react-three/drei";
 import { Canvas, useFrame, useThree, type Dpr } from "@react-three/fiber";
 import type { DefaultGLProps } from "@react-three/fiber/dist/declarations/src/core/renderer";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { WebGPURendererParameters } from "three/src/renderers/webgpu/WebGPURenderer.js";
 import * as THREE from "three/webgpu";
-import { backgroundRotation, rotatingSceneForBackgroundRotation } from "../game/scenes/SandboxScene";
 import { useGameStore } from "../game/state/useGameStore";
+import { backgroundRotation, rotatingSceneForBackgroundRotation } from "../game/utility/constants";
 import { rotateY } from "../game/utility/transforms";
 import { asType } from "../game/utility/types";
 import { useGpuTier } from "../game/utility/useGpuTier";
+import type { Renderer } from "./render";
 
 function GameCanvasGlobal() {
   const gl = useThree((s) => s.gl)
   const setRenderer = useGameStore(s => s.setRenderer);
+  const shadowsType = useGameStore(s => s.shadowsType);
   const setFirstFrameRendered = useGameStore(state => state.setFirstFrameRendered);
   const setInitialFramesRendered = useGameStore(state => state.setInitialFramesRendered);
 
   const frameRef = useRef(0);
+  const rendererRef = useRef<Renderer | null>(null);
 
   useLayoutEffect(() => {
-    setRenderer(gl as unknown as THREE.Renderer);
-    console.debug("Setting renderer:", gl);
+    const renderer = gl as unknown as Renderer;
+
+    console.debug("GL changed:", gl);
     frameRef.current = 0;
+    rendererRef.current = renderer;
     setFirstFrameRendered(false);
     setInitialFramesRendered(false);
+    setRenderer(renderer);
     return () => {
+      console.debug("GL effect cleanup");
+      if (rendererRef.current === renderer) {
+        rendererRef.current = null;
+      }
       setRenderer(undefined);
     }
-  }, [gl, setRenderer]);
+  }, [
+    gl,
+    setRenderer,
+    setFirstFrameRendered,
+    setInitialFramesRendered,
+  ]);
 
   useFrame(() => {
+    const renderer = rendererRef.current;
+
     if (frameRef.current === 0) {
       console.log("First frame rendered");
       setFirstFrameRendered(true);
     } else if (frameRef.current === 3) {
+      // wait enough frames for everything to load and settle
       console.log("Initial frames rendered");
       setInitialFramesRendered(true);
+    }
+
+    if (renderer) {
+      if (shadowsType !== undefined) {
+        if (!renderer.shadowMap.enabled || renderer.shadowMap.type !== shadowsType) {
+          console.debug("Enabling shadows with type:", shadowsType);
+          renderer.shadowMap.enabled = true;
+          renderer.shadowMap.type = shadowsType;
+        }
+      } else if (renderer.shadowMap.enabled) {
+        console.debug("Disabling shadows");
+        renderer.shadowMap.enabled = false;
+      }
     }
 
     frameRef.current += 1;
@@ -54,6 +85,7 @@ export function GameCanvas({
   children,
 }: GameCanvasProps) {
   const renderer = useGameStore(state => state.renderer);
+  //const shadowsType = useGameStore(state => state.shadowsType);
   const hdrPath = useGameStore(state => state.hdrPath);
   const sprint = useGameStore(state => state.input.sprint);
   const initialFramesRendered = useGameStore(state => state.initialFramesRendered);
@@ -62,17 +94,11 @@ export function GameCanvas({
   const gpuTier = useGpuTier();
   const loadingProgress = useProgress();
 
+  const [canvasVersion, setCanvasVersion] = useState(-1);
   const [dragControlsEnabled, setDragControlsEnabled] = useState(true);
   const [statsEnabled, setStatsEnabled] = useState(true);
 
-  const elementRef = useRef<HTMLDivElement>(null!);
-
-  const isWebGPU = useMemo(() => {
-    if (!renderer) {
-      return;
-    }
-    return asType<boolean>((renderer as THREE.WebGPURenderer).isWebGPURenderer ?? false);
-  }, [renderer]);
+  const rootDivRef = useRef<HTMLDivElement>(null!);
 
   const dpr: Dpr = useMemo(() => {
     if (asType<boolean>(false) && gpuTier.tier >= 3) {
@@ -94,16 +120,20 @@ export function GameCanvas({
     return position;
   }, [])
 
-  const powerPreference: GPUPowerPreference = "high-performance";
-  const samples = asType<boolean>(true) ? 0 : gpuTier.tier >= 3 ? 4 : 2
-  const alpha = asType<boolean>(true)
+  const powerPreference = "high-performance" as const;
+  const { samples } = gpuTier;
+  const alpha = asType<boolean>(true);
+
+  const { forceGL: gpuTierForceGL } = gpuTier;
+
+  const shouldForceWebGL = forceWebGL || gpuTierForceGL;
 
   const createRenderer = useCallback(async (props: DefaultGLProps) => {
-    let forcingWebGL = forceWebGL;
+    let forcingWebGL = shouldForceWebGL;
 
     while (true) {
       try {
-        console.debug("Creating WebGPU renderer with props:", props, 'overrides:', { samples, alpha, forceWebGL, powerPreference });
+        console.debug("Creating WebGPU renderer with props:", props, 'overrides:', { samples, alpha, forcingWebGL, powerPreference });
 
         const renderer = new THREE.WebGPURenderer({
           ...props as WebGPURendererParameters,
@@ -115,44 +145,54 @@ export function GameCanvas({
         })
         await renderer.init();
         return renderer;
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (forcingWebGL) {
           throw err;
         }
 
-        console.error(`Falling back to WebGL renderer due to error: ${err.message}`);
+        console.error(`Falling back to WebGL renderer due to error: ${(err as Error).message}`);
         forcingWebGL = true;
       }
     }
-  }, [forceWebGL, samples, alpha, powerPreference])
+  }, [
+    shouldForceWebGL,
+    samples,
+    alpha,
+    powerPreference,
+  ])
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCanvasVersion(v => v + 1);
+  }, [createRenderer])
 
   const toggleFullscreen = async () => {
     if (!document.fullscreenElement) {
       // Request fullscreen on the specific element
       try {
-        await elementRef.current.requestFullscreen();
-      } catch (err: any) {
-        console.error(`Error attempting to enable fullscreen: ${err.message}`);
+        await rootDivRef.current.requestFullscreen();
+      } catch (err: unknown) {
+        console.error(`Error attempting to enable fullscreen: ${(err as Error).message}`);
       }
     } else {
       // Exit fullscreen if already in it
       try {
         await document.exitFullscreen();
-      } catch (err: any) {
-        console.error(`Error attempting to exit fullscreen: ${err.message}`);
+      } catch (err: unknown) {
+        console.error(`Error attempting to exit fullscreen: ${(err as Error).message}`);
       }
     }
   };
 
   return (
     <div
-      ref={elementRef}
+      ref={rootDivRef}
       style={{
         width: "100%",
         height: "100%",
         position: "relative",
       }}>
-      {true && (
+      {asType<boolean>(true) && (
         <div
           style={{
             position: "absolute",
@@ -189,12 +229,12 @@ export function GameCanvas({
                 height: "100%",
               }}
             >
-              Loading... {Math.min(loadingProgress.progress, 99).toFixed(0)}% [Tier {gpuTier.tier}] {renderer ? `(${isWebGPU ? "WebGPU" : "WebGL"})` : ""}
+              Loading... {Math.min(loadingProgress.progress, 99).toFixed(0)}% [Tier {gpuTier.tier}] {renderer ? `(${renderer.backend.constructor.name.replaceAll('Backend', '')})` : ""}
             </div>
           )}
         </div>
       )}
-      {true && (
+      {asType<boolean>(true) && (
         <div
           style={{
             position: "absolute",
@@ -209,13 +249,19 @@ export function GameCanvas({
         />
       )}
       <Canvas
-        shadows
+        key={canvasVersion <= 0 ? 'canvas-0' : `canvas-${canvasVersion}`}
+        /*
+        shadows={{
+          type: THREE.BasicShadowMap,
+        }}
+        */
         dpr={dpr}
         style={{
           ...(!hdrPath && { background: 'gray' }),
-          visibility: !initialFramesRendered ? "hidden" : "visible",
+          visibility: !initialFramesRendered
+            ? "hidden"
+            : "visible",
         }}
-        flat
         gl={createRenderer}
         camera={{
           fov: 65,
@@ -223,6 +269,7 @@ export function GameCanvas({
           far: 100,
           position: cameraPos,
         }}
+        flat
       >
         <GameCanvasGlobal />
 
@@ -239,7 +286,7 @@ export function GameCanvas({
           />
         ) : (
           <FlyControls
-            //domElement={elementRef.current}
+            //domElement={rootDivRef.current}
             makeDefault
             dragToLook
             movementSpeed={sprint ? 1.0 : 0.1}
@@ -252,7 +299,7 @@ export function GameCanvas({
 
       {statsEnabled && (
         <Stats
-          parent={elementRef}
+          parent={rootDivRef}
         />
       )}
     </div>

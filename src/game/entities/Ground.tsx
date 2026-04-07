@@ -6,7 +6,7 @@ export function Ground() {
 
   return (
     <>
-      {false && (
+      {asType<boolean>(false) && (
         <mesh
           rotation-x={-Math.PI / 2}
           position={[0, 0, 0]}
