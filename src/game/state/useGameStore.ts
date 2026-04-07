@@ -26,6 +26,8 @@ type GameState = {
   setScenePass: (pass: THREE.PassNode | undefined) => void;
   renderer?: THREE.Renderer;
   setRenderer: (renderer: THREE.Renderer | undefined) => void;
+  shadowsType?: THREE.ShadowMapType;
+  setShadowsType: (type: THREE.ShadowMapType | undefined) => void;
 };
 
 export const useGameStore = create<GameState>(set => ({
@@ -49,4 +51,6 @@ export const useGameStore = create<GameState>(set => ({
   setScenePass: (pass) => set({ scenePass: pass }),
   renderer: undefined,
   setRenderer: (renderer) => set({ renderer }),
+  shadowsType: THREE.PCFSoftShadowMap,
+  setShadowsType: (type) => set({ shadowsType: type }),
 }));

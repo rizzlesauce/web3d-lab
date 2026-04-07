@@ -1,8 +1,6 @@
 import { ContactShadows, GizmoHelper, GizmoViewport, Grid } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
-import { Bloom, BrightnessContrast, DepthOfField, EffectComposer, HueSaturation, N8AO, SMAA, ToneMapping, Vignette } from "@react-three/postprocessing";
 import { useLayoutEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
 import * as THREE from "three/webgpu";
 import { WebGPUPostFX } from "../../render/WebGPUPostFX";
 import { AtmospherePollenCylinder } from "../entities/AtmospherePollenCylinder";
@@ -55,7 +53,6 @@ export const backgroundRotation = asType<boolean>(true) ? 2 * Math.PI * -0.22 : 
 export const rotatingSceneForBackgroundRotation = asType<boolean>(true) && backgroundRotation !== 0;
 // There is a bug with Environment backgroundRotation when ground projection is enabled
 const usingEnvironmentGroundProjection = asType<boolean>(true) && (!backgroundRotation || rotatingSceneForBackgroundRotation);
-const allowingHigherTier1Quality = true;
 
 export function SandboxScene() {
   const camera = useThree((s) => s.camera)
@@ -67,12 +64,12 @@ export function SandboxScene() {
   //const scenePass = useGameStore(state => state.scenePass);
   const setHdrPath = useGameStore(state => state.setHdrPath);
   const firstFrameRendered = useGameStore(state => state.firstFrameRendered);
-
-  const [searchParams, _setSearchParams] = useSearchParams();
+  const setShadowsType = useGameStore(state => state.setShadowsType);
 
   const [cameraMask, setCameraMask] = useState(camera.layers.mask);
   const [cubeCameraResolution, setCubeCameraResolution] = useState(64);
 
+  const { allowingHigherTier1Quality } = gpuTier;
   const aoExcludeLayer = 10;
   const particlesMainCameraLayer = aoExcludeLayer;
   //const particlesMainCameraLayer = 11;
@@ -81,9 +78,7 @@ export function SandboxScene() {
   const cubeCamera1Layer = 30;
   const cubeCamera2Layer = 31;
 
-  const isWebGpu = (gl as unknown as THREE.WebGPURenderer).isWebGPURenderer ?? false;
-
-  const usingSimplerTree = gpuTier.tier < 1 && !['false', 'f', '0'].includes(searchParams.get("altTree")?.toLowerCase() || "");
+  const usingSimplerTree = gpuTier.altTree;
   const hidingTruck = asType<boolean>(false) || !gpuTier.truckEnabled;
   const cubeCameraDisabled = asType<boolean>(false) || !gpuTier.cubeCameraEnabled;
 
@@ -151,11 +146,12 @@ export function SandboxScene() {
       resolution = '1k';
     }
     setHdrPath(`/hdr/${hdr.name}_${resolution}.hdr`);
-  }, [setHdrPath, gpuTier]);
+  }, [setHdrPath, gpuTier, allowingHigherTier1Quality]);
 
   useLayoutEffect(() => {
     if (firstFrameRendered) {
-      let resolution: number;
+      let resolution = 64;
+
       if (asType<boolean>(true) && gpuTier.tier >= 3) {
         resolution = 1024;
       } else if (asType<boolean>(false) && gpuTier.tier >= 3) {
@@ -168,12 +164,10 @@ export function SandboxScene() {
         resolution = 128;
       } else if (true) {
         resolution = 128;
-      } else {
-        resolution = 64;
       }
       setCubeCameraResolution(resolution);
     }
-  }, [firstFrameRendered, gpuTier]);
+  }, [firstFrameRendered, gpuTier, allowingHigherTier1Quality]);
 
   useLayoutEffect(() => {
     gl.setClearColor(0x000000, hdrPath ? 1 : 0);
@@ -184,22 +178,46 @@ export function SandboxScene() {
     if (gpuTier.tier >= 3) {
       return 2048;
     } else if ((asType<boolean>(false) && gpuTier.tier >= 2) || (allowingHigherTier1Quality && gpuTier.tier >= 1)) {
+      // to prevent flickering shadow under cube camera sphere
+      return 2048;
+    } else if ((asType<boolean>(false) && gpuTier.tier >= 2) || (allowingHigherTier1Quality && gpuTier.tier >= 1)) {
       return 1024;
     } else if (gpuTier.tier >= 1) {
       return 512;
     }
     return 512;
-  }, [gpuTier]);
+  }, [gpuTier, allowingHigherTier1Quality]);
 
   useLayoutEffect(() => {
     if (firstFrameRendered) {
-      if (asType<boolean>(true) && gpuTier.tier >= 1) {
-        gl.shadowMap.type = THREE.PCFShadowMap;
-      } else if (asType<boolean>(true)) {
-        gl.shadowMap.type = THREE.BasicShadowMap;
+      let shadowsTypeNew: THREE.ShadowMapType | undefined;
+      const { shadowsType } = gpuTier;
+      switch (shadowsType) {
+        case 'pcf':
+          shadowsTypeNew = THREE.PCFShadowMap;
+          break;
+        case 'basic':
+          shadowsTypeNew = THREE.BasicShadowMap;
+          break;
+        case 'none':
+          shadowsTypeNew = undefined;
+          break;
+        case 'soft':
+          shadowsTypeNew = THREE.PCFSoftShadowMap;
+          break;
+        case 'vsm':
+          shadowsTypeNew = THREE.VSMShadowMap;
+          break;
       }
+      console.log(`Shadows set to: ${shadowsType}`);
+      //setShadowsType(shadowsTypeNew);
     }
-  }, [firstFrameRendered, gl, gpuTier]);
+  }, [
+    firstFrameRendered,
+    gl,
+    gpuTier,
+    setShadowsType,
+  ]);
 
   useFrame(({ camera }, _delta) => {
     if (asType<boolean>(false)) {
@@ -492,10 +510,6 @@ export function SandboxScene() {
                         : 20
                       : 0
               }
-              near={0.01}
-              autoClearDuringCapture
-              //disableShadowsDuringCapture
-              adoptDelayFrames={0}
               cameraMask={cameraMask}
               //includeLayers={particlesCubeCameraLayer}
               excludeLayers={cubeCamera1Layer}
@@ -566,10 +580,6 @@ export function SandboxScene() {
                       : 20
                     : 0
             }
-            near={0.01}
-            autoClearDuringCapture
-            //disableShadowsDuringCapture
-            adoptDelayFrames={0}
             cameraMask={cameraMask}
             //includeLayers={particlesCubeCameraLayer}
             excludeLayers={cubeCamera2Layer}
@@ -643,12 +653,12 @@ export function SandboxScene() {
         </GizmoHelper>
       )}
 
-      {asType<boolean>(true) && gpuTier.tier >= 1 && (
+      {asType<boolean>(true) && gpuTier.postEnabled && (
         <WebGPUPostFX
           cameraMask={cameraMask}
           gpuTier={gpuTier}
           allowingHigherTier1Quality={allowingHigherTier1Quality}
-          enableAO={true}
+          enableAO={gpuTier.aoEnabled}
           enableSSR={true}
           enableBloom={true}
           enableContrast={true}
@@ -663,71 +673,6 @@ export function SandboxScene() {
           ssrIncludeLayers={ssrIncludeLayer}
           //renderPriority={3}
         />
-      )}
-
-      {asType<boolean>(false) && gpuTier.tier >= 1 && (
-        <EffectComposer
-          multisampling={0}
-        >
-          <>
-            {true && !isWebGpu && (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
-              <N8AO
-                intensity={2}
-                halfRes={asType<boolean>(false) || gpuTier.tier < 3}
-                quality={gpuTier.tier >= 3 ? 'high' : gpuTier.tier >= 2 ? 'medium' : gpuTier.tier >= 1 ? 'low' : 'performance'}
-                aoRadius={.6}
-                distanceFalloff={0.6}
-                aoSamples={gpuTier.tier >= 3 ? 24 : gpuTier.tier >= 2 ? 16 : gpuTier.tier >= 1 ? 8 : 4}
-                denoiseRadius={gpuTier.tier >= 3 ? 8 : gpuTier.tier >= 2 ? 6 : gpuTier.tier >= 1 ? 4 : 2}
-              />
-            )}
-
-            {true && !isWebGpu && (gpuTier.tier >= 2 || (true && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
-              <Bloom
-                intensity={0.22}
-                luminanceThreshold={1.05}
-                luminanceSmoothing={0.03}
-              />
-            )}
-
-            {true && !isWebGpu && gpuTier.tier >= 1 && (
-              <BrightnessContrast
-                brightness={0}
-                contrast={0.09}
-              />
-            )}
-
-            {asType<boolean>(false) && !isWebGpu && (
-              <HueSaturation
-                hue={0}
-                saturation={0.01}
-              />
-            )}
-
-            {true && !isWebGpu && gpuTier.tier >= 1 && (
-              <Vignette
-                offset={0.18}
-                darkness={0.28}
-              />
-            )}
-
-            {true && !isWebGpu && (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
-              <DepthOfField
-                focusDistance={0.02}
-                focalLength={0.01}
-                bokehScale={.6}
-              />
-            )}
-
-            {true && !isWebGpu && (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1)) && (
-              <SMAA />
-            )}
-
-            {true && !isWebGpu && gpuTier.tier >= 1 && (
-              <ToneMapping />
-            )}
-          </>
-        </EffectComposer>
       )}
     </>
   );

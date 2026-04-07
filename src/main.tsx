@@ -1,13 +1,18 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import { BrowserRouter } from 'react-router-dom'
-import App from './app/App.tsx'
-import './index.css'
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './app/App.tsx';
+import { searchParamValueToBoolean } from './game/utility/useGpuTier.ts';
+import './index.css';
+
+const searchParams = new URLSearchParams(window.location.search);
+const strict = searchParamValueToBoolean(searchParams, "strict") ?? true;
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <BrowserRouter>
+  strict ? (
+    <StrictMode>
       <App />
-    </BrowserRouter>
-  </StrictMode>,
+    </StrictMode>
+  ) : (
+    <App />
+  )
 )

@@ -1,8 +1,6 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
-import type { WebGPURenderer } from 'three/webgpu'
 import * as THREE from 'three/webgpu'
-import { RenderPipeline } from 'three/webgpu'
 
 import {
   convertToTexture,
@@ -91,16 +89,14 @@ export function WebGPUPostFX({
   renderPriority = 1,
   cameraMask = 0,
 }: WebGPUPostFXProps) {
-  const gl = useThree((s) => s.gl) as unknown as WebGPURenderer
+  const gl = useThree((s) => s.gl) as unknown as THREE.Renderer
   const scene = useThree((s) => s.scene)
   const camera = useThree((s) => s.camera)
   const setScenePass = useGameStore((s) => s.setScenePass)
 
-  const [pipeline, setPipeline] = useState<RenderPipeline | undefined>()
+  const [pipeline, setPipeline] = useState<THREE.RenderPipeline | undefined>()
 
-  const aoAllowed =
-    enableAO &&
-    (gpuTier.tier >= 2 || (false && allowingHigherTier1Quality && gpuTier.tier >= 1))
+  const aoAllowed = enableAO
 
   const ssgiAllowed =
     enableSSGI &&
@@ -143,7 +139,7 @@ export function WebGPUPostFX({
   ])
 
   useLayoutEffect(() => {
-    if (!gl || !scene || !camera || !gl.isWebGPURenderer) {
+    if (!gl || !scene || !camera) {
       setScenePass(undefined)
       setPipeline(undefined)
       return
@@ -164,7 +160,7 @@ export function WebGPUPostFX({
     }
     scenePass.setLayers(mainLayers)
 
-    const renderPipeline = new RenderPipeline(gl)
+    const renderPipeline = new THREE.RenderPipeline(gl)
 
     // AO scene pass: same scene, but excluding objects on the aoExcludeLayer
     const aoScenePass = aoAllowed ? pass(scene, camera) : undefined

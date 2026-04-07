@@ -65,13 +65,6 @@ type StablePmremCubeCameraProps = Omit<ThreeElements['group'], 'children'> &
     frameInterval?: number
 
     /**
-     * Delay adoption of the freshly captured cubemap by this many frames.
-     * Keeping this lets you preserve the same “stable adoption” behavior
-     * you had with the manual PMREM path.
-     */
-    adoptDelayFrames?: number
-
-    /**
      * If provided, this is applied to the materials immediately on mount,
      * before the first generated cubemap is ready.
      */
@@ -91,19 +84,18 @@ export function StablePmremCubeCamera({
   children,
   envRotation = [0, 0, 0],
   resolution = 256,
-  near = 0.1,
-  far = 1000,
+  near = 0.09,
+  far = 100,
   envMap = null,
   fog = null,
   excludeLayers = [],
   includeLayers = [],
   disableShadowsDuringCapture = false,
-  autoClearDuringCapture = false,
+  autoClearDuringCapture = true,
   useVisibilityHide,
   renderPriority,
   firstFrame = 3,
   frameInterval = 1,
-  adoptDelayFrames = 0,
   initialEnvMap = null,
   disabled,
   cameraMask = 0,
@@ -150,12 +142,7 @@ export function StablePmremCubeCamera({
     const createTarget = () => {
       const rt = new THREE.CubeRenderTarget(resolution, {
         type: THREE.HalfFloatType,
-        // TODO: remove if not needed
-        //generateMipmaps: false,
       })
-
-      // TODO: remove if not needed
-      //gl.initRenderTarget(rt)
 
       return rt
     }
@@ -170,7 +157,6 @@ export function StablePmremCubeCamera({
   }, [
     disabled,
     resolution,
-    /*gl,*/
   ])
 
   const excludeLayersArray = useMemo(() => (Array.isArray(excludeLayers) ? excludeLayers : [excludeLayers]), [excludeLayers])
@@ -296,7 +282,7 @@ export function StablePmremCubeCamera({
 
     const originalFog = scene.fog
     const originalBackground = scene.background
-    const originalShadowAutoUpdate = gl.shadowMap?.autoUpdate
+    const originalShadowAutoUpdate = gl.shadowMap.autoUpdate
     const originalAutoClear = gl.autoClear
     const originalAutoClearDepth = gl.autoClearDepth
     const originalAutoClearStencil = gl.autoClearStencil
@@ -304,15 +290,14 @@ export function StablePmremCubeCamera({
     scene.background = envMap ?? originalBackground
     scene.fog = fog ?? originalFog
 
-    if (disableShadowsDuringCapture && gl.shadowMap) {
+    if (disableShadowsDuringCapture && gl.shadowMap.enabled) {
       gl.shadowMap.autoUpdate = false
     }
 
     if (autoClearDuringCapture) {
       gl.autoClear = true
-      // TODO: remove
-      //gl.autoClearDepth = true
-      //gl.autoClearStencil = true
+      gl.autoClearDepth = true
+      gl.autoClearStencil = true
     }
 
     cubeCamera.update(gl, scene)
@@ -320,10 +305,7 @@ export function StablePmremCubeCamera({
     gl.autoClear = originalAutoClear
     gl.autoClearDepth = originalAutoClearDepth
     gl.autoClearStencil = originalAutoClearStencil
-
-    if (disableShadowsDuringCapture && gl.shadowMap && originalShadowAutoUpdate !== undefined) {
-      gl.shadowMap.autoUpdate = originalShadowAutoUpdate
-    }
+    gl.shadowMap.autoUpdate = originalShadowAutoUpdate
 
     scene.fog = originalFog
     scene.background = originalBackground

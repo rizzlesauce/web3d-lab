@@ -12,28 +12,35 @@ import { useGpuTier } from "../game/utility/useGpuTier";
 
 function GameCanvasGlobal() {
   const gl = useThree((s) => s.gl)
-  const setRenderer = useGameStore(s => s.setRenderer);
+  const renderer = useGameStore(state => state.renderer);
   const setFirstFrameRendered = useGameStore(state => state.setFirstFrameRendered);
   const setInitialFramesRendered = useGameStore(state => state.setInitialFramesRendered);
 
   const frameRef = useRef(0);
 
   useLayoutEffect(() => {
-    setRenderer(gl as unknown as THREE.Renderer);
-    console.debug("Setting renderer:", gl);
+    console.debug("GL changed:", gl);
+    return () => {
+      console.debug("GL effect destructor");
+    }
+  }, [gl]);
+
+  useLayoutEffect(() => {
+    console.debug("Renderer changed:", renderer);
     frameRef.current = 0;
     setFirstFrameRendered(false);
     setInitialFramesRendered(false);
     return () => {
-      setRenderer(undefined);
+      console.debug("Renderer effect destructor");
     }
-  }, [gl, setRenderer]);
+  }, [renderer]);
 
   useFrame(() => {
     if (frameRef.current === 0) {
       console.log("First frame rendered");
       setFirstFrameRendered(true);
     } else if (frameRef.current === 3) {
+      // wait enough frames for everything to load and settle
       console.log("Initial frames rendered");
       setInitialFramesRendered(true);
     }
@@ -54,6 +61,8 @@ export function GameCanvas({
   children,
 }: GameCanvasProps) {
   const renderer = useGameStore(state => state.renderer);
+  const setRenderer = useGameStore(s => s.setRenderer);
+  //const shadowsType = useGameStore(state => state.shadowsType);
   const hdrPath = useGameStore(state => state.hdrPath);
   const sprint = useGameStore(state => state.input.sprint);
   const initialFramesRendered = useGameStore(state => state.initialFramesRendered);
@@ -67,11 +76,11 @@ export function GameCanvas({
 
   const elementRef = useRef<HTMLDivElement>(null!);
 
-  const isWebGPU = useMemo(() => {
+  const isWebGPUBackend = useMemo(() => {
     if (!renderer) {
       return;
     }
-    return asType<boolean>((renderer as THREE.WebGPURenderer).isWebGPURenderer ?? false);
+    return asType<boolean>(((renderer as THREE.WebGPURenderer).backend as any).isWebGPUBackend ?? false);
   }, [renderer]);
 
   const dpr: Dpr = useMemo(() => {
@@ -95,15 +104,19 @@ export function GameCanvas({
   }, [])
 
   const powerPreference: GPUPowerPreference = "high-performance";
-  const samples = asType<boolean>(true) ? 0 : gpuTier.tier >= 3 ? 4 : 2
-  const alpha = asType<boolean>(true)
+  const { samples } = gpuTier;
+  const alpha = asType<boolean>(true);
+
+  const { forceGL: gpuTierForceGL } = gpuTier;
+
+  const shouldForceWebGL = forceWebGL || gpuTierForceGL;
 
   const createRenderer = useCallback(async (props: DefaultGLProps) => {
-    let forcingWebGL = forceWebGL;
+    let forcingWebGL = shouldForceWebGL;
 
     while (true) {
       try {
-        console.debug("Creating WebGPU renderer with props:", props, 'overrides:', { samples, alpha, forceWebGL, powerPreference });
+        console.debug("Creating WebGPU renderer with props:", props, 'overrides:', { samples, alpha, forcingWebGL, powerPreference });
 
         const renderer = new THREE.WebGPURenderer({
           ...props as WebGPURendererParameters,
@@ -114,6 +127,7 @@ export function GameCanvas({
           forceWebGL: forcingWebGL,
         })
         await renderer.init();
+        setRenderer(renderer);
         return renderer;
       } catch (err: any) {
         if (forcingWebGL) {
@@ -124,7 +138,13 @@ export function GameCanvas({
         forcingWebGL = true;
       }
     }
-  }, [forceWebGL, samples, alpha, powerPreference])
+  }, [
+    shouldForceWebGL,
+    samples,
+    alpha,
+    powerPreference,
+    setRenderer,
+  ])
 
   const toggleFullscreen = async () => {
     if (!document.fullscreenElement) {
@@ -189,7 +209,7 @@ export function GameCanvas({
                 height: "100%",
               }}
             >
-              Loading... {Math.min(loadingProgress.progress, 99).toFixed(0)}% [Tier {gpuTier.tier}] {renderer ? `(${isWebGPU ? "WebGPU" : "WebGL"})` : ""}
+              Loading... {Math.min(loadingProgress.progress, 99).toFixed(0)}% [Tier {gpuTier.tier}] {renderer ? `(${isWebGPUBackend ? "WebGPU" : "WebGL"})` : ""}
             </div>
           )}
         </div>
@@ -210,12 +230,18 @@ export function GameCanvas({
       )}
       <Canvas
         shadows
+        /*
+        {...shadowsType ? {
+          shadows: {
+            type: shadowsType,
+          }
+        } : {}}
+         */
         dpr={dpr}
         style={{
           ...(!hdrPath && { background: 'gray' }),
           visibility: !initialFramesRendered ? "hidden" : "visible",
         }}
-        flat
         gl={createRenderer}
         camera={{
           fov: 65,
@@ -223,6 +249,7 @@ export function GameCanvas({
           far: 100,
           position: cameraPos,
         }}
+        flat
       >
         <GameCanvasGlobal />
 
