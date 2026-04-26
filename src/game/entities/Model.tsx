@@ -1,7 +1,7 @@
 import { useAnimations, useGLTF } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
-import { useEffect, useRef, useState } from "react";
-import * as THREE from "three";
+import { useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three/webgpu";
 import { asType } from "../utility/types";
 
 export type ModelTransformProps = {
@@ -17,6 +17,8 @@ type ModelProps = ModelTransformProps & {
   alphaBlendMaps?: Set<string>
   updatingSkinnedMeshBoundingSphere?: boolean
   skinnedMeshFrustumCulledOverride?: boolean
+  alphaToCoverageClip?: boolean
+  alphaToCoverageDither?: boolean
 };
 
 type RenderMethod = 'opaque' | 'clip' | 'blend' | 'dither';
@@ -70,6 +72,8 @@ export function Model({
   debugBoundingBoxes = false,
   updatingSkinnedMeshBoundingSphere = false,
   skinnedMeshFrustumCulledOverride = false,
+  alphaToCoverageClip = true,
+  alphaToCoverageDither = false,
 } : ModelProps) {
   const { scene, animations } = useGLTF(modelPath);
 
@@ -78,6 +82,14 @@ export function Model({
   const [meshesNeedingPerFrameBoundaryUpdate, setMeshesNeedingPerFrameBoundaryUpdate] = useState<THREE.SkinnedMesh[]>([]);
   const boxHelpersRef = useRef<THREE.BoxHelper[]>([]);
   const sphereHelpersRef = useRef<THREE.Mesh[]>([]);
+
+  const alphaBlendMapsKey = Array.from(alphaBlendMaps).sort().join(',');
+  const alphaBlendMapsStable = useMemo(
+    () => new Set<string>(alphaBlendMapsKey === '' ? [] : alphaBlendMapsKey.split(',').filter(s => s)),
+    [
+      alphaBlendMapsKey,
+    ],
+  );
 
   useEffect(() => {
     const boxHelpers: THREE.BoxHelper[] = [];
@@ -113,7 +125,12 @@ export function Model({
       });
       sphereHelpersRef.current = [];
     };
-  }, [scene, meshesNeedingPerFrameBoundaryUpdate, debug, debugBoundingBoxes]);
+  }, [
+    scene,
+    meshesNeedingPerFrameBoundaryUpdate,
+    debug,
+    debugBoundingBoxes,
+  ]);
 
   useFrame(() => {
     const boxHelpers = boxHelpersRef.current;
@@ -164,7 +181,7 @@ export function Model({
 
       const { userData: objUserData } = obj;
 
-      if (typeof objUserData.frustomCulled === 'boolean') {
+      if (typeof objUserData.frustumCulled === 'boolean') {
         if (asType<boolean>(true) || debug) {
           console.log("userData.frustumCulled:", objUserData.frustumCulled, objPath);
         }
@@ -193,7 +210,7 @@ export function Model({
             return;
           }
 
-          let materialPath = `${objPath}:${mat.name}`;
+          const materialPath = `${objPath}:${mat.name}`;
           let materialMapName = '';
 
           const { userData } = mat;
@@ -296,7 +313,7 @@ export function Model({
             }
           }
 
-          if (alphaBlendMaps.has(materialMapName)) {
+          if (alphaBlendMapsStable.has(materialMapName)) {
             if (asType<boolean>(true) || debug) {
               console.log("Material is in alphaBlendMaps", materialPath);
             }
@@ -317,9 +334,7 @@ export function Model({
               depthTest = true;
               depthWrite = true;
               alphaTest = 0;
-              if (asType<boolean>(true)) {
-                alphaToCoverage = false;
-              }
+              alphaToCoverage = false;
               break;
 
             case 'clip':
@@ -328,9 +343,7 @@ export function Model({
               depthTest = true;
               depthWrite = true;
               alphaTest = alphaTest || 0.5;
-              if (asType<boolean>(true)) {
-                alphaToCoverage = true;
-              }
+              alphaToCoverage = alphaToCoverageClip;
               break;
 
             case 'blend':
@@ -339,9 +352,7 @@ export function Model({
               depthTest = true;
               depthWrite = false;
               alphaTest = 0;
-              if (asType<boolean>(true)) {
-                alphaToCoverage = false;
-              }
+              alphaToCoverage = false;
               break;
 
             case 'dither':
@@ -350,10 +361,7 @@ export function Model({
               depthTest = true;
               depthWrite = true;
               alphaTest = 0;
-              if (asType<boolean>(true)) {
-                // May have little to no impact
-                alphaToCoverage = true;
-              }
+              alphaToCoverage = alphaToCoverageDither;
               break;
           }
 
@@ -449,6 +457,7 @@ export function Model({
       }
     });
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMeshesNeedingPerFrameBoundaryUpdate(newMeshesNeedingPerFrameBoundaryUpdate);
 
     Object.values(actions)[0]?.play();
@@ -456,6 +465,12 @@ export function Model({
     scene,
     updatingSkinnedMeshBoundingSphere,
     skinnedMeshFrustumCulledOverride,
+    debug,
+    actions,
+    modelPath,
+    alphaBlendMapsStable,
+    alphaToCoverageClip,
+    alphaToCoverageDither,
   ]);
 
   return (

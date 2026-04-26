@@ -70,7 +70,7 @@ export function bindKeyboard(setInput: Dispatch<SetStateAction<InputState>>) {
 
 export function bindMouseLook() {
   // optional: pointer lock later
-  const onMove = (_e: MouseEvent) => {
+  const onMove = () => {
     // store deltas wherever you keep input; or route into store
   };
 

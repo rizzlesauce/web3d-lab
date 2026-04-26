@@ -1,5 +1,6 @@
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { create } from "zustand";
+import type { Renderer } from "../../render/render";
 import { createInput, type InputState } from "../systems/input";
 
 type Updater<T> = T | ((prev: T) => T);
@@ -12,6 +13,8 @@ export type GameRefs = {
 type GameState = {
   input: InputState;
   setInput: (input: Updater<InputState>) => void;
+  firstFrameRendered: boolean;
+  setFirstFrameRendered: (value: boolean) => void;
   initialFramesRendered: boolean;
   setInitialFramesRendered: (value: boolean) => void;
   paused: boolean;
@@ -20,6 +23,12 @@ type GameState = {
   togglePaused: () => void;
   hdrPath?: string;
   setHdrPath: (path: string | undefined) => void;
+  scenePass?: THREE.PassNode;
+  setScenePass: (pass: THREE.PassNode | undefined) => void;
+  renderer?: Renderer;
+  setRenderer: (renderer: Renderer | undefined) => void;
+  shadowsType?: THREE.ShadowMapType;
+  setShadowsType: (type: THREE.ShadowMapType | undefined) => void;
 };
 
 export const useGameStore = create<GameState>(set => ({
@@ -29,6 +38,8 @@ export const useGameStore = create<GameState>(set => ({
       ? inputOrUpdater(s.input)
       : inputOrUpdater
   })),
+  firstFrameRendered: false,
+  setFirstFrameRendered: value => set({ firstFrameRendered: value }),
   initialFramesRendered: false,
   setInitialFramesRendered: value => set({ initialFramesRendered: value }),
   paused: false,
@@ -37,4 +48,10 @@ export const useGameStore = create<GameState>(set => ({
   togglePaused: () => set(s => ({ paused: !s.paused })),
   hdrPath: undefined,
   setHdrPath: (path) => set({ hdrPath: path }),
+  scenePass: undefined,
+  setScenePass: (pass) => set({ scenePass: pass }),
+  renderer: undefined,
+  setRenderer: (renderer) => set({ renderer }),
+  shadowsType: THREE.BasicShadowMap,
+  setShadowsType: (type) => set({ shadowsType: type }),
 }));

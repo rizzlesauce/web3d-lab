@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 
 export function enableShadows(obj: THREE.Object3D) {
   obj.traverse(child => {
